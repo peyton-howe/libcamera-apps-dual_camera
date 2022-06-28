@@ -199,6 +199,7 @@ private:
 	std::mutex completed_requests_mutex_;
 	std::set<CompletedRequest *> completed_requests_;
 	bool camera_started_ = false;
+	bool camera2_started_ = false;
 	std::mutex camera_stop_mutex_;
 	MessageQueue<Msg> msg_queue_;
 	// Related to the preview window.

@@ -132,13 +132,13 @@ void LibcameraApp::OpenCamera()
 
 	if (!options_->post_process_file.empty()){
 		post_processor_.Read(options_->post_process_file);
-		post_processor2_.Read(options_->post_process_file);
+		//post_processor2_.Read(options_->post_process_file);
 	}
 	// The queue takes over ownership from the post-processor.
 	post_processor_.SetCallback(
 		[this](CompletedRequestPtr &r) { this->msg_queue_.Post(Msg(MsgType::RequestComplete, std::move(r))); });
-	post_processor2_.SetCallback(
-		[this](CompletedRequestPtr &r) { this->msg_queue_.Post(Msg(MsgType::RequestComplete, std::move(r))); });
+	//post_processor2_.SetCallback(
+	//	[this](CompletedRequestPtr &r) { this->msg_queue_.Post(Msg(MsgType::RequestComplete, std::move(r))); });
 }
 
 void LibcameraApp::CloseCamera()
@@ -212,6 +212,9 @@ void LibcameraApp::ConfigureViewfinder()
 	// Now we get to override any of the default settings from the options_->
 	configuration_->at(0).pixelFormat = libcamera::formats::YUV420;
 	configuration_->at(0).size = size;
+	
+	configuration2_->at(0).pixelFormat = libcamera::formats::YUV420;
+	configuration2_->at(0).size = size;
 
 	if (have_lores_stream)
 	{
@@ -232,9 +235,10 @@ void LibcameraApp::ConfigureViewfinder()
 	}
 
 	configuration_->transform = options_->transform;
+	configuration2_->transform = options_->transform;
 
 	post_processor_.AdjustConfig("viewfinder", &configuration_->at(0));
-	post_processor2_.AdjustConfig("viewfinder", &configuration2_->at(0));
+	//post_processor2_.AdjustConfig("viewfinder", &configuration2_->at(0));
 
 	configureDenoise(options_->denoise == "auto" ? "cdn_off" : options_->denoise);
 	setupCapture();
@@ -246,7 +250,7 @@ void LibcameraApp::ConfigureViewfinder()
 		streams_["raw"] = configuration_->at(raw_stream_num).stream();
 
 	post_processor_.Configure();
-	post_processor2_.Configure();
+	//post_processor2_.Configure();
 
 	if (options_->verbose)
 		std::cerr << "Viewfinder setup complete" << std::endl;
@@ -472,6 +476,7 @@ void LibcameraApp::StartCamera()
 		throw std::runtime_error("failed to start camera");
 	controls_.clear();
 	camera_started_ = true;
+	camera2_started_ = true;
 	last_timestamp_ = 0;
 
 	post_processor_.Start();
@@ -546,6 +551,8 @@ void LibcameraApp::queueRequest(CompletedRequest *completed_request)
 	std::lock_guard<std::mutex> stop_lock(camera_stop_mutex_);
 	if (!camera_started_)
 		return;
+	else if (!camera2_started_)
+		return;
 
 	// An application could be holding a CompletedRequest while it stops and re-starts
 	// the camera, after which we don't want to queue another request now.
@@ -569,6 +576,8 @@ void LibcameraApp::queueRequest(CompletedRequest *completed_request)
 	}
 
 	if (camera_->queueRequest(request) < 0)
+		throw std::runtime_error("failed to queue request");	
+	else if (camera2_->queueRequest(request) < 0)
 		throw std::runtime_error("failed to queue request");
 }
 
@@ -671,6 +680,15 @@ void LibcameraApp::setupCapture()
 
 	if (camera_->configure(configuration_.get()) < 0)
 		throw std::runtime_error("failed to configure streams");
+		
+	CameraConfiguration::Status validation2 = configuration2_->validate();
+	if (validation2 == CameraConfiguration::Invalid)
+		throw std::runtime_error("failed to valid stream configurations");
+	else if (validation2 == CameraConfiguration::Adjusted)
+		std::cerr << "Stream configuration adjusted" << std::endl;
+		
+	if (camera2_->configure(configuration2_.get()) < 0)
+		throw std::runtime_error("failed to configure streams for camera 2");
 	if (options_->verbose)
 		std::cerr << "Camera streams configured" << std::endl;
 
