@@ -30,7 +30,7 @@ public:
 	~DrmPreview();
 	// Display the buffer. You get given the fd back in the BufferDoneCallback
 	// once its available for re-use.
-	virtual void Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info, int fd2, libcamera::Span<uint8_t> span2, StreamInfo const &info2) override;
+	virtual void Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info) override;
 	// Reset the preview window, clearing the current buffers and being ready to
 	// show new ones.
 	virtual void Reset() override;
@@ -86,7 +86,7 @@ uint32_t pitch;
 uint32_t fb;
 uint64_t modifier;
 
-/*static GLint compile_shader(GLenum target, const char *source)
+static GLint compile_shader(GLenum target, const char *source)
 {
 	GLuint s = glCreateShader(target);
 	glShaderSource(s, 1, (const GLchar **)&source, NULL);
@@ -142,7 +142,7 @@ static GLint link_program(GLint vs, GLint fs)
 	}
 
 	return prog;
-}*/
+}
 
 static int match_config_to_visual(EGLDisplay egl_display, EGLint visual_id, EGLConfig *configs, int count) {
 	int j;
@@ -169,9 +169,6 @@ static int match_config_to_visual(EGLDisplay egl_display, EGLint visual_id, EGLC
 	return -1;
 }
 
-static drmModeModeInfo mode_info;
-drmModeCrtc *crtc = NULL;
-
 void DrmPreview::findCrtc()
 {
 	int i;
@@ -194,9 +191,7 @@ void DrmPreview::findCrtc()
 		{
 			drmModeConnector *con = drmModeGetConnector(drmfd_, res->connectors[i]);
 			drmModeEncoder *enc = NULL;
-			
-			
-			mode_info = con->modes[0];
+			drmModeCrtc *crtc = NULL;
 
 			if (con->encoder_id)
 			{
@@ -537,8 +532,7 @@ static void setup_colour_space(int fd, int plane_id, std::optional<libcamera::Co
 
 	drm_set_property(fd, plane_id, "COLOR_ENCODING", encoding);
 	drm_set_property(fd, plane_id, "COLOR_RANGE", range);
-	
-	/*const char *vs = "#version 300 es\n"
+	const char *vs = "#version 300 es\n"
 					 "in vec3 pos;\n"
 			         "in vec2 tex;\n"
 			         "out vec2 texcoord;\n"
@@ -598,11 +592,10 @@ static void setup_colour_space(int fd, int plane_id, std::optional<libcamera::Co
             indices.push_back((short)(offset+ (N+1) + 1));
         }
     }
-	SSQuad1 = new Mesh({ POS, TEX }, vertices, indices);*/
+	SSQuad1 = new Mesh({ POS, TEX }, vertices, indices);
 }
-
-static struct gbm_bo *previous_bo = NULL;
-static uint32_t previous_fb; 
+struct gbm_bo *previous_bo = NULL;
+uint32_t previous_fb;
 
 void DrmPreview::makeBuffer(int fd, size_t size, StreamInfo const &info, Buffer &buffer)
 {
@@ -613,11 +606,6 @@ void DrmPreview::makeBuffer(int fd, size_t size, StreamInfo const &info, Buffer 
 			throw std::runtime_error("eglMakeCurrent failed");
 		setup_colour_space(drmfd_, planeId_, info.colour_space);
 	}
-	
-	eglSwapBuffers(egl_display_, egl_surface_);	
-	
-	struct gbm_bo *bo = gbm_surface_lock_front_buffer(gbm_surface);
-
 
 	buffer.fd = fd;
 	buffer.size = size;
@@ -631,20 +619,13 @@ void DrmPreview::makeBuffer(int fd, size_t size, StreamInfo const &info, Buffer 
 	uint32_t pitches[4] = { info.stride, info.stride / 2, info.stride / 2 };
 	uint32_t bo_handles[4] = { buffer.bo_handle, buffer.bo_handle, buffer.bo_handle };
 	
+	eglSwapBuffers(egl_display_, egl_surface_);
+	bo = gbm_surface_lock_front_buffer(gbm_surface);
+	
+	std::cout << "bo" << bo << "\n";
 	
 	if (drmModeAddFB2(drmfd_, info.width, info.height, out_fourcc_, bo_handles, pitches, offsets, &buffer.fb_handle, 0))
 		throw std::runtime_error("drmModeAddFB2 failed: " + std::string(ERRSTR));
-	
-	//uint32_t connector_id = (uint32_t)conId_;
-	
-	//drmModeSetCrtc(drmfd_, crtc->crtc_id, fb, 0, 0, &connector_id, 1, &mode_info); 	
-	
-	if (previous_bo) {
-		drmModeRmFB(drmfd_, previous_fb);
-		gbm_surface_release_buffer(gbm_surface, previous_bo);
-	}
-	previous_bo = bo;
-	previous_fb = fb;
 		
 	/*EGLint attribs[50];
 	int i = 0;
@@ -688,7 +669,7 @@ void DrmPreview::makeBuffer(int fd, size_t size, StreamInfo const &info, Buffer 
 		attribs[i++] = pitches[2];
 	}
 
-	attribs[i++] = EGL_NONE;
+	attribs[i++] = EGL_NONE;*/
 	//char const *encoding, *range;
 	//get_colour_space_info(info.colour_space, encoding, range);	
 	EGLint attribs[] = {
@@ -714,49 +695,55 @@ void DrmPreview::makeBuffer(int fd, size_t size, StreamInfo const &info, Buffer 
 		printf("failed to create EGL image, error: 0x%x\n", eglGetError());
 		throw std::runtime_error("no image made");
 	}
-	//glGenTextures(1, &buffer.texture);
-	//glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer.texture);
-	//glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	//glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	//glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, image);
+	glGenTextures(1, &buffer.texture);
+	glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer.texture);
+	glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, image);
 
-	eglDestroyImageKHR(egl_display_, image);*/
+	eglDestroyImageKHR(egl_display_, image);
+	
+			
+	if (previous_bo){
+		drmModeRmFB(drmfd_, previous_fb);
+		gbm_surface_release_buffer(gbm_surface, previous_bo);
+	}
+	
+	std::cout << "previous_bo" << previous_bo << "\n";
+	
+	previous_bo = bo;
+	previous_fb = fd;
 }
 
-void DrmPreview::Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info, int fd2, libcamera::Span<uint8_t> span2, StreamInfo const &info2)
+void DrmPreview::Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info)
 {
 	
 	Buffer &buffer = buffers_[fd];
 	if (buffer.fd == -1){
 		makeBuffer(fd, span.size(), info, buffer);
 	}
-	Buffer &buffer2 = buffers_[fd2];
-	if (buffer2.fd == -1){
-		makeBuffer(fd2, span2.size(), info2, buffer2);
-	}
 		
-	//unsigned int x_off = 0, y_off = 0;
-	//unsigned int w = width_, h = height_;
-	//if (info.width * height_ > width_ * info.height)
-	//	h = width_ * info.height / info.width, y_off = (height_ - h) / 2;
-	//else
-	//	w = height_ * info.width / info.height, x_off = (width_ - w) / 2;
+	unsigned int x_off = 0, y_off = 0;
+	unsigned int w = width_, h = height_;
+	if (info.width * height_ > width_ * info.height)
+		h = width_ * info.height / info.width, y_off = (height_ - h) / 2;
+	else
+		w = height_ * info.width / info.height, x_off = (width_ - w) / 2;
 	
-	/*if (drmModeSetPlane(drmfd_, planeId_, crtcId_, buffer.fb_handle, 0, x_off + x_, y_off + y_, w, h, 0, 0,
-						buffer.info.width << 16, buffer.info.height << 16))
-		throw std::runtime_error("drmModeSetPlane failed: " + std::string(ERRSTR));*/
-	
-	glClearColor(1, 1, 1, 1);
+	glClearColor(0, 0, 0, 0);
 	glClear(GL_COLOR_BUFFER_BIT);
-	//glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer.texture);
-	//glViewport(0, 0, 960, 1080);
-    //glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	//SSQuad1->draw();
-	//glViewport(960, 0, 960, 1080);
-	//glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	//SSQuad1->draw();
-	//glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+	glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer.texture);
+	glViewport(0, 0, 960, 1080);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	SSQuad1->draw();
+	glViewport(960, 0, 960, 1080);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	SSQuad1->draw();
+	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 	EGLBoolean success [[maybe_unused]] = eglSwapBuffers(egl_display_, egl_surface_);
+	if (drmModeSetPlane(drmfd_, planeId_, crtcId_, buffer.fb_handle, 0, x_off + x_, y_off + y_, w, h, 0, 0,
+						buffer.info.width << 16, buffer.info.height << 16))
+		throw std::runtime_error("drmModeSetPlane failed: " + std::string(ERRSTR));
 		
 	if (last_fd_ >= 0)
 		done_callback_(last_fd_);

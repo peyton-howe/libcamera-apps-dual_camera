@@ -38,7 +38,7 @@ public:
 	//virtual void SetInfoText(const std::string &text) override;
 	// Display the buffer. You get given the fd back in the BufferDoneCallback
 	// once its available for re-use.
-	virtual void Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info, int fd2, libcamera::Span<uint8_t> span2, StreamInfo const &info2);
+	virtual void Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info) override;
 	// Reset the preview window, clearing the current buffers and being ready to
 	// show new ones.
 	virtual void Reset() override;
@@ -485,23 +485,15 @@ void EglPreview::makeBuffer(int fd, size_t size, StreamInfo const &info, Buffer 
 //		XStoreName(display_, window_, text.c_str());
 //}
 
-void EglPreview::Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info, int fd2, libcamera::Span<uint8_t> span2, StreamInfo const &info2)
+void EglPreview::Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info)
 {
 	Buffer &buffer = buffers_[fd];
 	if (buffer.fd == -1)
 		makeBuffer(fd, span.size(), info, buffer);
-		
-	Buffer &buffer2 = buffers_[fd2];
-	if (buffer2.fd == -1)
-		makeBuffer(fd2, span2.size(), info2, buffer2);
-		
-	//Buffer &buffer2 = buffers_[fd2];
-	//if (buffer2.fd == -1)
-	//	makeBuffer(fd2, span2.size(), info2, buffer2);
 
 	glClearColor(0, 0, 0, 0);
 	glClear(GL_COLOR_BUFFER_BIT);
-	glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer.texture); /// need second framebuffer for second camera
+	glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer.texture);
 	//glViewport(0, 0, 960, 1080);
     //glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	SSQuad->draw();
