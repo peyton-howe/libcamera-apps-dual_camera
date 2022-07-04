@@ -168,13 +168,13 @@ private:
 		}
 		CompletedRequestPtr completed_request;
 		Stream *stream;
-		Stream *stream2;
 	};
 
 	void setupCapture();
 	void makeRequests();
-	void queueRequest(CompletedRequest *completed_request);
+	void queueRequest(CompletedRequest *completed_request, std::shared_ptr<Camera> camera);
 	void requestComplete(Request *request);
+	void requestComplete2(Request *request);
 	void previewDoneCallback(int fd);
 	void startPreview();
 	void stopPreview();
@@ -220,5 +220,4 @@ private:
 	uint64_t last_timestamp_;
 	uint64_t sequence_ = 0;
 	PostProcessor post_processor_;
-	PostProcessor post_processor2_;
 };

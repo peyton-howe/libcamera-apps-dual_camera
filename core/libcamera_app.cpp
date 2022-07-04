@@ -60,7 +60,7 @@ static libcamera::PixelFormat mode_to_pixel_format(Mode const &mode)
 }
 
 LibcameraApp::LibcameraApp(std::unique_ptr<Options> opts)
-	: options_(std::move(opts)), controls_(controls::controls), post_processor_(this), post_processor2_(this)
+	: options_(std::move(opts)), controls_(controls::controls), post_processor_(this)
 {
 	check_camera_stack();
 
@@ -108,37 +108,35 @@ void LibcameraApp::OpenCamera()
 		throw std::runtime_error("no cameras available");
 	if (options_->camera >= cameras.size())
 		throw std::runtime_error("selected camera is not available");
-
+	
+	///Acquire Camera 1
 	std::string const &cam_id = cameras[0]->id();
 	camera_ = camera_manager_->get(cam_id);
 	if (!camera_)
-		throw std::runtime_error("failed to find camera " + cam_id);
+		throw std::runtime_error("failed to find camera 1: " + cam_id);
 
 	if (camera_->acquire())
-		throw std::runtime_error("failed to acquire camera " + cam_id);
+		throw std::runtime_error("failed to acquire camera 1: " + cam_id);
 	camera_acquired_ = true;
 	
+	///Acquire Camera 2
 	std::string const &cam_id2 = cameras[1]->id();
 	camera2_ = camera_manager_->get(cam_id2);
 	if (!camera2_)
-		throw std::runtime_error("failed to find camera " + cam_id2);
+		throw std::runtime_error("failed to find camera 2: " + cam_id);
 
 	if (camera2_->acquire())
-		throw std::runtime_error("failed to acquire camera " + cam_id2);
+		throw std::runtime_error("failed to acquire camera 2: " + cam_id);
 	camera2_acquired_ = true;
 
 	if (options_->verbose)
-		std::cerr << "Acquired camera 1 " << cam_id << " & camera 2 " << cam_id2 << std::endl;
+		std::cerr << "Acquired camera 1: " << cam_id << " & camera 2: " << cam_id2 << std::endl;
 
-	if (!options_->post_process_file.empty()){
+	if (!options_->post_process_file.empty())
 		post_processor_.Read(options_->post_process_file);
-		//post_processor2_.Read(options_->post_process_file);
-	}
 	// The queue takes over ownership from the post-processor.
 	post_processor_.SetCallback(
 		[this](CompletedRequestPtr &r) { this->msg_queue_.Post(Msg(MsgType::RequestComplete, std::move(r))); });
-	//post_processor2_.SetCallback(
-	//	[this](CompletedRequestPtr &r) { this->msg_queue_.Post(Msg(MsgType::RequestComplete, std::move(r))); });
 }
 
 void LibcameraApp::CloseCamera()
@@ -147,9 +145,14 @@ void LibcameraApp::CloseCamera()
 
 	if (camera_acquired_)
 		camera_->release();
+	if (camera2_acquired_)
+		camera2_->release();
+		
 	camera_acquired_ = false;
+	camera2_acquired_ = false;
 
 	camera_.reset();
+	camera2_.reset();
 
 	camera_manager_.reset();
 
@@ -168,18 +171,23 @@ void LibcameraApp::ConfigureViewfinder()
 
 	StreamRoles stream_roles = { StreamRole::Viewfinder };
 	StreamRoles stream_roles2 = { StreamRole::Viewfinder };
+	
 	int stream_num = 1;
-	if (have_lores_stream)
+	if (have_lores_stream){
 		stream_roles.push_back(StreamRole::Viewfinder), lores_stream_num = stream_num++;
-	if (have_raw_stream)
+		stream_roles2.push_back(StreamRole::Viewfinder), lores_stream_num = stream_num++;
+	}
+	if (have_raw_stream){
 		stream_roles.push_back(StreamRole::Raw), raw_stream_num = stream_num++;
+		stream_roles2.push_back(StreamRole::Raw), raw_stream_num = stream_num++;
+	}
 
 	configuration_ = camera_->generateConfiguration(stream_roles);
 	if (!configuration_)
-		throw std::runtime_error("failed to generate viewfinder configuration");
+		throw std::runtime_error("failed to generate viewfinder configuration for camera 1");
 	configuration2_ = camera2_->generateConfiguration(stream_roles2);
 	if (!configuration2_)
-		throw std::runtime_error("failed to generate viewfinder configuration");
+		throw std::runtime_error("failed to generate viewfinder configuration for camera 2");
 
 	Size size(1280, 960);
 	if (options_->viewfinder_width && options_->viewfinder_height)
@@ -225,6 +233,9 @@ void LibcameraApp::ConfigureViewfinder()
 		configuration_->at(lores_stream_num).pixelFormat = libcamera::formats::YUV420;
 		configuration_->at(lores_stream_num).size = lores_size;
 		configuration_->at(lores_stream_num).bufferCount = configuration_->at(0).bufferCount;
+		configuration2_->at(lores_stream_num).pixelFormat = libcamera::formats::YUV420;
+		configuration2_->at(lores_stream_num).size = lores_size;
+		configuration2_->at(lores_stream_num).bufferCount = configuration_->at(0).bufferCount;
 	}
 
 	if (have_raw_stream)
@@ -232,25 +243,26 @@ void LibcameraApp::ConfigureViewfinder()
 		configuration_->at(raw_stream_num).size = options_->viewfinder_mode.Size();
 		configuration_->at(raw_stream_num).pixelFormat = mode_to_pixel_format(options_->viewfinder_mode);
 		configuration_->at(raw_stream_num).bufferCount = configuration_->at(0).bufferCount;
+		configuration2_->at(raw_stream_num).size = options_->viewfinder_mode.Size();
+		configuration2_->at(raw_stream_num).pixelFormat = mode_to_pixel_format(options_->viewfinder_mode);
+		configuration2_->at(raw_stream_num).bufferCount = configuration_->at(0).bufferCount;
 	}
 
 	configuration_->transform = options_->transform;
 	configuration2_->transform = options_->transform;
 
-	post_processor_.AdjustConfig("viewfinder", &configuration_->at(0));
-	//post_processor2_.AdjustConfig("viewfinder", &configuration2_->at(0));
+	post_processor_.AdjustConfig("viewfinder", &configuration2_->at(0));
 
 	configureDenoise(options_->denoise == "auto" ? "cdn_off" : options_->denoise);
 	setupCapture();
 
-	streams_["viewfinder"] = configuration_->at(0).stream();
+	streams_["viewfinder"] = configuration2_->at(0).stream();
 	if (have_lores_stream)
-		streams_["lores"] = configuration_->at(lores_stream_num).stream();
+		streams_["lores"] = configuration2_->at(lores_stream_num).stream();
 	if (have_raw_stream)
-		streams_["raw"] = configuration_->at(raw_stream_num).stream();
+		streams_["raw"] = configuration2_->at(raw_stream_num).stream();
 
 	post_processor_.Configure();
-	//post_processor2_.Configure();
 
 	if (options_->verbose)
 		std::cerr << "Viewfinder setup complete" << std::endl;
@@ -404,10 +416,15 @@ void LibcameraApp::Teardown()
 
 	delete allocator_;
 	allocator_ = nullptr;
+	
+	delete allocator2_;
+	allocator2_ = nullptr;
 
 	configuration_.reset();
+	configuration2_.reset();
 
 	frame_buffers_.clear();
+	frame_buffers2_.clear();
 
 	streams_.clear();
 }
@@ -471,29 +488,33 @@ void LibcameraApp::StartCamera()
 		controls_.set(controls::Sharpness, options_->sharpness);
 
 	if (camera_->start(&controls_))
-		throw std::runtime_error("failed to start camera");
+		throw std::runtime_error("failed to start camera 1");
 	if (camera2_->start(&controls_))
-		throw std::runtime_error("failed to start camera");
+		throw std::runtime_error("failed to start camera 2");
+		
 	controls_.clear();
+	
 	camera_started_ = true;
 	camera2_started_ = true;
+	
 	last_timestamp_ = 0;
 
 	post_processor_.Start();
 
 	camera_->requestCompleted.connect(this, &LibcameraApp::requestComplete);
-	camera2_->requestCompleted.connect(this, &LibcameraApp::requestComplete);
+	camera2_->requestCompleted.connect(this, &LibcameraApp::requestComplete2);
 
 	for (std::unique_ptr<Request> &request : requests_)
 	{
 		if (camera_->queueRequest(request.get()) < 0)
-			throw std::runtime_error("Failed to queue request");
+			throw std::runtime_error("Failed to queue request for camera 1");
 	}
 	
-	for (std::unique_ptr<Request> &request : requests_)
+	/// Create own requests for camera 2
+	for (std::unique_ptr<Request> &request : requests2_) 
 	{
 		if (camera2_->queueRequest(request.get()) < 0)
-			throw std::runtime_error("Failed to queue request");
+			throw std::runtime_error("Failed to queue request for camera 2");
 	}
 
 	if (options_->verbose)
@@ -509,15 +530,23 @@ void LibcameraApp::StopCamera()
 		{
 			if (camera_->stop())
 				throw std::runtime_error("failed to stop camera");
-
+			
+				
+			if (camera2_->stop())
+				throw std::runtime_error("failed to stop camera 2");
+			
 			post_processor_.Stop();
 
 			camera_started_ = false;
+			camera2_started_ = false;
 		}
 	}
 
 	if (camera_)
 		camera_->requestCompleted.disconnect(this, &LibcameraApp::requestComplete);
+		
+	if (camera2_)
+		camera2_->requestCompleted.disconnect(this, &LibcameraApp::requestComplete2);
 
 	// An application might be holding a CompletedRequest, so queueRequest will get
 	// called to delete it later, but we need to know not to try and re-queue it.
@@ -538,7 +567,7 @@ LibcameraApp::Msg LibcameraApp::Wait()
 	return msg_queue_.Wait();
 }
 
-void LibcameraApp::queueRequest(CompletedRequest *completed_request)
+void LibcameraApp::queueRequest(CompletedRequest *completed_request, std::shared_ptr<Camera> camera)
 {
 	BufferMap buffers(std::move(completed_request->buffers));
 
@@ -549,9 +578,7 @@ void LibcameraApp::queueRequest(CompletedRequest *completed_request)
 	// This function may run asynchronously so needs protection from the
 	// camera stopping at the same time.
 	std::lock_guard<std::mutex> stop_lock(camera_stop_mutex_);
-	if (!camera_started_)
-		return;
-	else if (!camera2_started_)
+	if (!camera_started_ || !camera2_started_)
 		return;
 
 	// An application could be holding a CompletedRequest while it stops and re-starts
@@ -575,9 +602,7 @@ void LibcameraApp::queueRequest(CompletedRequest *completed_request)
 		request->controls() = std::move(controls_);
 	}
 
-	if (camera_->queueRequest(request) < 0)
-		throw std::runtime_error("failed to queue request");	
-	else if (camera2_->queueRequest(request) < 0)
+	if (camera->queueRequest(request) < 0)
 		throw std::runtime_error("failed to queue request");
 }
 
@@ -677,16 +702,16 @@ void LibcameraApp::setupCapture()
 		throw std::runtime_error("failed to valid stream configurations");
 	else if (validation == CameraConfiguration::Adjusted)
 		std::cerr << "Stream configuration adjusted" << std::endl;
-
-	if (camera_->configure(configuration_.get()) < 0)
-		throw std::runtime_error("failed to configure streams");
 		
 	CameraConfiguration::Status validation2 = configuration2_->validate();
-	if (validation2 == CameraConfiguration::Invalid)
+	if (validation == CameraConfiguration::Invalid)
 		throw std::runtime_error("failed to valid stream configurations");
 	else if (validation2 == CameraConfiguration::Adjusted)
 		std::cerr << "Stream configuration adjusted" << std::endl;
-		
+
+	
+	if (camera_->configure(configuration_.get()) < 0)
+		throw std::runtime_error("failed to configure streams for camera 1");
 	if (camera2_->configure(configuration2_.get()) < 0)
 		throw std::runtime_error("failed to configure streams for camera 2");
 	if (options_->verbose)
@@ -695,12 +720,9 @@ void LibcameraApp::setupCapture()
 	// Next allocate all the buffers we need, mmap them and store them on a free list.
 
 	allocator_ = new FrameBufferAllocator(camera_);
-	allocator2_ = new FrameBufferAllocator(camera2_);
-	
 	for (StreamConfiguration &config : *configuration_)
 	{
 		Stream *stream = config.stream();
-		Stream *stream2 = config.stream();
 
 		if (allocator_->allocate(stream) < 0)
 			throw std::runtime_error("failed to allocate capture buffers");
@@ -724,7 +746,17 @@ void LibcameraApp::setupCapture()
 			}
 			frame_buffers_[stream].push(buffer.get());
 		}
-		for (const std::unique_ptr<FrameBuffer> &buffer : allocator2_->buffers(stream2))
+	}
+	
+	allocator2_ = new FrameBufferAllocator(camera2_);
+	for (StreamConfiguration &config : *configuration2_)
+	{
+		Stream *stream = config.stream();
+
+		if (allocator2_->allocate(stream) < 0)
+			throw std::runtime_error("failed to allocate capture buffers");
+
+		for (const std::unique_ptr<FrameBuffer> &buffer : allocator2_->buffers(stream))
 		{
 			// "Single plane" buffers appear as multi-plane here, but we can spot them because then
 			// planes all share the same fd. We accumulate them so as to mmap the buffer only once.
@@ -741,10 +773,9 @@ void LibcameraApp::setupCapture()
 					buffer_size = 0;
 				}
 			}
-			frame_buffers2_[stream2].push(buffer.get());
+			frame_buffers2_[stream].push(buffer.get());
 		}
 	}
-	
 	if (options_->verbose)
 		std::cerr << "Buffers allocated and mapped" << std::endl;
 
@@ -755,8 +786,36 @@ void LibcameraApp::setupCapture()
 
 void LibcameraApp::makeRequests()
 {
-	auto free_buffers(frame_buffers_);
 	auto free_buffers2(frame_buffers2_);
+	while (true)
+	{
+		for (StreamConfiguration &config : *configuration2_)
+		{
+			Stream *stream = config.stream();
+			if (stream == configuration2_->at(0).stream())
+			{
+				if (free_buffers2[stream].empty())
+				{
+					if (options_->verbose)
+						std::cerr << "Requests created" << std::endl;
+					return;
+				}
+				std::unique_ptr<Request> request = camera2_->createRequest();
+				if (!request)
+					throw std::runtime_error("failed to make request");
+				requests2_.push_back(std::move(request));
+			}
+			else if (free_buffers2[stream].empty())
+				throw std::runtime_error("concurrent streams need matching numbers of buffers");
+
+			FrameBuffer *buffer = free_buffers2[stream].front();
+			free_buffers2[stream].pop();
+			if (requests2_.back()->addBuffer(stream, buffer) < 0)
+				throw std::runtime_error("failed to add buffer to request");
+		}
+	}
+	
+	auto free_buffers(frame_buffers_);
 	while (true)
 	{
 		for (StreamConfiguration &config : *configuration_)
@@ -770,34 +829,17 @@ void LibcameraApp::makeRequests()
 						std::cerr << "Requests created" << std::endl;
 					return;
 				}
-				if (free_buffers2[stream].empty())
-				{
-					if (options_->verbose)
-						std::cerr << "Requests created" << std::endl;
-					return;
-				}
 				std::unique_ptr<Request> request = camera_->createRequest();
 				if (!request)
 					throw std::runtime_error("failed to make request");
 				requests_.push_back(std::move(request));
-				std::unique_ptr<Request> request2 = camera2_->createRequest();
-				if (!request2)
-					throw std::runtime_error("failed to make request");
-				requests_.push_back(std::move(request));
-				requests2_.push_back(std::move(request2));
 			}
 			else if (free_buffers[stream].empty())
-				throw std::runtime_error("concurrent streams need matching numbers of buffers");
-			else if (free_buffers2[stream].empty())
 				throw std::runtime_error("concurrent streams need matching numbers of buffers");
 
 			FrameBuffer *buffer = free_buffers[stream].front();
 			free_buffers[stream].pop();
 			if (requests_.back()->addBuffer(stream, buffer) < 0)
-				throw std::runtime_error("failed to add buffer to request");
-			FrameBuffer *buffer2 = free_buffers2[stream].front();
-			free_buffers2[stream].pop();
-			if (requests2_.back()->addBuffer(stream, buffer2) < 0)
 				throw std::runtime_error("failed to add buffer to request");
 		}
 	}
@@ -809,7 +851,34 @@ void LibcameraApp::requestComplete(Request *request)
 		return;
 
 	CompletedRequest *r = new CompletedRequest(sequence_++, request);
-	CompletedRequestPtr payload(r, [this](CompletedRequest *cr) { this->queueRequest(cr); });
+	CompletedRequestPtr payload(r, [this](CompletedRequest *cr) { this->queueRequest(cr, camera_); });
+	{
+		std::lock_guard<std::mutex> lock(completed_requests_mutex_);
+		completed_requests_.insert(r);
+	}
+
+	// We calculate the instantaneous framerate in case anyone wants it.
+	// Use the sensor timestamp if possible as it ought to be less glitchy than
+	// the buffer timestamps.
+	uint64_t timestamp = payload->metadata.contains(controls::SensorTimestamp)
+							? payload->metadata.get(controls::SensorTimestamp)
+							: payload->buffers.begin()->second->metadata().timestamp;
+	if (last_timestamp_ == 0 || last_timestamp_ == timestamp)
+		payload->framerate = 0;
+	else
+		payload->framerate = 1e9 / (timestamp - last_timestamp_);
+	last_timestamp_ = timestamp;
+
+	post_processor_.Process(payload); // post-processor can re-use our shared_ptr
+}
+
+void LibcameraApp::requestComplete2(Request *request)
+{
+	if (request->status() == Request::RequestCancelled)
+		return;
+
+	CompletedRequest *r = new CompletedRequest(sequence_++, request);
+	CompletedRequestPtr payload(r, [this](CompletedRequest *cr) { this->queueRequest(cr, camera2_); });
 	{
 		std::lock_guard<std::mutex> lock(completed_requests_mutex_);
 		completed_requests_.insert(r);
@@ -877,32 +946,13 @@ void LibcameraApp::previewThread()
 			else
 				preview_cond_var_.wait(lock);
 		}
-		
-		/*PreviewItem item2;
-		while (!item2.stream2)
-		{
-			std::unique_lock<std::mutex> lock(preview_item_mutex_);
-			if (preview_abort_)
-			{
-				preview_->Reset();
-				return;
-			}
-			else if (preview_item_.stream2)
-				item2 = std::move(preview_item_); // re-use existing shared_ptr reference
-			else
-				preview_cond_var_.wait(lock);
-		}
 
 		if (item.stream->configuration().pixelFormat != libcamera::formats::YUV420)
-			throw std::runtime_error("Preview windows only support YUV420");*/
+			throw std::runtime_error("Preview windows only support YUV420");
 
 		StreamInfo info = GetStreamInfo(item.stream);
 		FrameBuffer *buffer = item.completed_request->buffers[item.stream];
 		libcamera::Span span = Mmap(buffer)[0];
-
-		StreamInfo info2 = GetStreamInfo(item.stream2);		
-		FrameBuffer *buffer2 = item.completed_request->buffers[item.stream2];
-		libcamera::Span span2 = Mmap(buffer2)[0];
 
 		// Fill the frame info with the ControlList items and ancillary bits.
 		FrameInfo frame_info(item.completed_request->metadata);
@@ -916,13 +966,6 @@ void LibcameraApp::previewThread()
 			preview_completed_requests_[fd] = std::move(item.completed_request);
 		}
 		
-		int fd2 = buffer2->planes()[0].fd.get();
-		{
-			std::lock_guard<std::mutex> lock(preview_mutex_);
-			// the reference to the shared_ptr moves to the map here
-			preview_completed_requests_[fd2] = std::move(item.completed_request);
-		}
-		
 		if (preview_->Quit())
 		{
 			if (options_->verbose)
@@ -930,12 +973,12 @@ void LibcameraApp::previewThread()
 			msg_queue_.Post(Msg(MsgType::Quit));
 		}
 		preview_frames_displayed_++;
-		preview_->Show(fd, span, info, fd2, span2, info2);
-		if (!options_->info_text.empty())
-		{
-			std::string s = frame_info.ToString(options_->info_text);
-			preview_->SetInfoText(s);
-		}
+		preview_->Show(fd, span, info);
+		//if (!options_->info_text.empty())
+		//{
+		//	std::string s = frame_info.ToString(options_->info_text);
+		//	preview_->SetInfoText(s);
+		//}
 	}
 }
 
