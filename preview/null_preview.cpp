@@ -22,7 +22,7 @@ public:
 	~NullPreview() {}
 	// Display the buffer. You get given the fd back in the BufferDoneCallback
 	// once its available for re-use.
-	virtual void Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info) override
+	virtual void Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info, int fd2, libcamera::Span<uint8_t> span2, StreamInfo const &info2) override
 	{
 		done_callback_(fd);
 	}

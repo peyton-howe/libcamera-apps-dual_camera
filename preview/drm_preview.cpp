@@ -30,7 +30,7 @@ public:
 	~DrmPreview();
 	// Display the buffer. You get given the fd back in the BufferDoneCallback
 	// once its available for re-use.
-	virtual void Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info) override;
+	virtual void Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info, int fd2, libcamera::Span<uint8_t> span2, StreamInfo const &info2) override;
 	// Reset the preview window, clearing the current buffers and being ready to
 	// show new ones.
 	virtual void Reset() override;
@@ -715,7 +715,7 @@ void DrmPreview::makeBuffer(int fd, size_t size, StreamInfo const &info, Buffer 
 	previous_fb = fd;
 }
 
-void DrmPreview::Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info)
+void DrmPreview::Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info, int fd2, libcamera::Span<uint8_t> span2, StreamInfo const &info2)
 {
 	
 	Buffer &buffer = buffers_[fd];

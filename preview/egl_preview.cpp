@@ -38,7 +38,7 @@ public:
 	//virtual void SetInfoText(const std::string &text) override;
 	// Display the buffer. You get given the fd back in the BufferDoneCallback
 	// once its available for re-use.
-	virtual void Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info) override;
+	virtual void Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info, int fd2, libcamera::Span<uint8_t> span2, StreamInfo const &info2) override;
 	// Reset the preview window, clearing the current buffers and being ready to
 	// show new ones.
 	virtual void Reset() override;
@@ -321,8 +321,8 @@ void EglPreview::makeWindow(char const *name)
 	// Default behaviour here is to use a 1024x768 window.
 	if (width_ == 0 || height_ == 0)
 	{
-		width_ = 1024;
-		height_ = 768;
+		width_ = 1920;
+		height_ = 1080;
 	}
 
 	if (options_->fullscreen || x_ + width_ > screen_width || y_ + height_ > screen_height)
@@ -485,21 +485,26 @@ void EglPreview::makeBuffer(int fd, size_t size, StreamInfo const &info, Buffer 
 //		XStoreName(display_, window_, text.c_str());
 //}
 
-void EglPreview::Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info)
+void EglPreview::Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &info, int fd2, libcamera::Span<uint8_t> span2, StreamInfo const &info2)
 {
 	Buffer &buffer = buffers_[fd];
 	if (buffer.fd == -1)
 		makeBuffer(fd, span.size(), info, buffer);
+		
+	Buffer &buffer2 = buffers_[fd2];
+	if (buffer2.fd == -1)
+		makeBuffer(fd2, span2.size(), info2, buffer2);
 
 	glClearColor(0, 0, 0, 0);
 	glClear(GL_COLOR_BUFFER_BIT);
 	glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer.texture);
-	//glViewport(0, 0, 960, 1080);
+	glViewport(0, 0, 960, 1080);
     //glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	SSQuad->draw();
-	//glViewport(960, 0, 960, 1080);
+	glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer2.texture);
+	glViewport(960, 0, 960, 1080);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	//SSQuad->draw();
+	SSQuad->draw();
 	//glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 	EGLBoolean success [[maybe_unused]] = eglSwapBuffers(egl_display_, egl_surface_);
 	if (last_fd_ >= 0)
