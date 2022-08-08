@@ -115,8 +115,9 @@ public:
 	Stream *GetMainStream() const;
 
 	std::vector<libcamera::Span<uint8_t>> Mmap(FrameBuffer *buffer) const;
+	std::vector<libcamera::Span<uint8_t>> Mmap2(FrameBuffer *buffer) const;
 
-	void ShowPreview(CompletedRequestPtr &completed_request, Stream *stream);
+	void ShowPreview(CompletedRequestPtr &completed_request, CompletedRequestPtr &completed_request2, Stream *stream);
 
 	void SetControls(ControlList &controls);
 	StreamInfo GetStreamInfo(Stream const *stream) const;
@@ -172,7 +173,8 @@ private:
 
 	void setupCapture();
 	void makeRequests();
-	void queueRequest(CompletedRequest *completed_request, std::shared_ptr<Camera> camera);
+	void queueRequest(CompletedRequest *completed_request);
+	void queueRequest2(CompletedRequest *completed_request);
 	void requestComplete(Request *request);
 	void requestComplete2(Request *request);
 	void previewDoneCallback(int fd);
@@ -189,6 +191,7 @@ private:
 	std::unique_ptr<CameraConfiguration> configuration_;
 	std::unique_ptr<CameraConfiguration> configuration2_;
 	std::map<FrameBuffer *, std::vector<libcamera::Span<uint8_t>>> mapped_buffers_;
+	std::map<FrameBuffer *, std::vector<libcamera::Span<uint8_t>>> mapped_buffers2_;
 	std::map<std::string, Stream *> streams_;
 	FrameBufferAllocator *allocator_ = nullptr;
 	FrameBufferAllocator *allocator2_ = nullptr;
@@ -197,18 +200,25 @@ private:
 	std::vector<std::unique_ptr<Request>> requests_;
 	std::vector<std::unique_ptr<Request>> requests2_;
 	std::mutex completed_requests_mutex_;
+	std::mutex completed_requests_mutex2_;
 	std::set<CompletedRequest *> completed_requests_;
+	std::set<CompletedRequest *> completed_requests2_;
 	bool camera_started_ = false;
 	bool camera2_started_ = false;
 	std::mutex camera_stop_mutex_;
+	std::mutex camera_stop_mutex2_;
 	MessageQueue<Msg> msg_queue_;
 	// Related to the preview window.
 	std::unique_ptr<Preview> preview_;
 	std::map<int, CompletedRequestPtr> preview_completed_requests_;
+	std::map<int, CompletedRequestPtr> preview_completed_requests2_;
 	std::mutex preview_mutex_;
 	std::mutex preview_item_mutex_;
+	std::mutex preview_item_mutex2_;
 	PreviewItem preview_item_;
+	PreviewItem preview_item2_;
 	std::condition_variable preview_cond_var_;
+	std::condition_variable preview_cond_var2_;
 	bool preview_abort_ = false;
 	uint32_t preview_frames_displayed_ = 0;
 	uint32_t preview_frames_dropped_ = 0;
@@ -219,5 +229,7 @@ private:
 	// Other:
 	uint64_t last_timestamp_;
 	uint64_t sequence_ = 0;
+	uint64_t sequence2_ = 0;
 	PostProcessor post_processor_;
+	PostProcessor post_processor2_;
 };
