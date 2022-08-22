@@ -68,7 +68,9 @@ private:
 	EGLContext egl_context_;
 	EGLSurface egl_surface_;
 	std::map<int, Buffer> buffers_; // map the DMABUF's fd to the Buffer
+	std::map<int, Buffer> buffers2_; // map the DMABUF's fd to the Buffer
 	int last_fd_;
+	int last_fd2_;
 	bool first_time_;
 	Atom wm_delete_window_;
 	// size of preview window
@@ -239,7 +241,7 @@ static void gl_setup(int width, int height, int window_width, int window_height)
 
 }
 
-EglPreview::EglPreview(Options const *options) : Preview(options), last_fd_(-1), first_time_(true)
+EglPreview::EglPreview(Options const *options) : Preview(options), last_fd_(-1), last_fd2_(-1), first_time_(true)
 {
 	display_ = XOpenDisplay(NULL);
 	if (!display_)
@@ -321,8 +323,8 @@ void EglPreview::makeWindow(char const *name)
 	// Default behaviour here is to use a 1024x768 window.
 	if (width_ == 0 || height_ == 0)
 	{
-		width_ = 1920;
-		height_ = 1080;
+		width_ = 1024;
+		height_ = 768;
 	}
 
 	if (options_->fullscreen || x_ + width_ > screen_width || y_ + height_ > screen_height)
@@ -490,17 +492,18 @@ void EglPreview::Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &i
 	Buffer &buffer = buffers_[fd];
 	if (buffer.fd == -1)
 		makeBuffer(fd, span.size(), info, buffer);
-		
-	Buffer &buffer2 = buffers_[fd2];
+
+	Buffer &buffer2 = buffers2_[fd2];
 	if (buffer2.fd == -1)
 		makeBuffer(fd2, span2.size(), info2, buffer2);
-
+		
 	glClearColor(0, 0, 0, 0);
 	glClear(GL_COLOR_BUFFER_BIT);
 	glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer.texture);
 	glViewport(0, 0, 960, 1080);
     //glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	SSQuad->draw();
+	
 	glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer2.texture);
 	glViewport(960, 0, 960, 1080);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -510,6 +513,10 @@ void EglPreview::Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &i
 	if (last_fd_ >= 0)
 		done_callback_(last_fd_);
 	last_fd_ = fd;
+	
+	//if (last_fd2_ >= 0)
+	//	done_callback_(last_fd2_);
+	//last_fd2_ = fd2;
 }
 
 void EglPreview::Reset()
