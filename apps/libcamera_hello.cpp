@@ -31,13 +31,13 @@ static void event_loop(LibcameraApp &app)
 			return;
 		else if (msg.type != LibcameraApp::MsgType::RequestComplete)
 			throw std::runtime_error("unrecognised message!");
+
 		LibcameraApp::Msg msg2 = app.Wait();
 		if (msg2.type == LibcameraApp::MsgType::Quit)
 			return;
 		else if (msg2.type != LibcameraApp::MsgType::RequestComplete)
 			throw std::runtime_error("unrecognised message!");
-
-
+			
 		if (options->verbose)
 			std::cerr << "Viewfinder frame " << count << std::endl;
 		auto now = std::chrono::high_resolution_clock::now();
@@ -45,9 +45,9 @@ static void event_loop(LibcameraApp &app)
 			return;
 
 		CompletedRequestPtr &completed_request = std::get<CompletedRequestPtr>(msg.payload);
-		CompletedRequestPtr &completed_request2 = std::get<CompletedRequestPtr>(msg2.payload);
+		CompletedRequestPtr &completed_request2 = std::get<CompletedRequestPtr>(msg.payload);
 		
-		app.ShowPreview(completed_request, completed_request2, app.ViewfinderStream());
+		app.ShowPreview(completed_request, app.ViewfinderStream(), completed_request2, app.ViewfinderStream2());
 	}
 }
 
