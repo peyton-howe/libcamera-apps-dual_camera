@@ -39,9 +39,16 @@ static void event_loop(LibcameraJpegApp &app)
 	app.StartCamera();
 	auto start_time = std::chrono::high_resolution_clock::now();
 
-	for (unsigned int count = 0; ; count++)
+	for (;;)
 	{
 		LibcameraApp::Msg msg = app.Wait();
+		if (msg.type == LibcameraApp::MsgType::Timeout)
+		{
+			LOG_ERROR("ERROR: Device timeout detected, attempting a restart!!!");
+			app.StopCamera();
+			app.StartCamera();
+			continue;
+		}
 		if (msg.type == LibcameraApp::MsgType::Quit)
 			return;
 		else if (msg.type != LibcameraApp::MsgType::RequestComplete)
@@ -69,7 +76,7 @@ static void event_loop(LibcameraJpegApp &app)
 		else if (app.StillStream())
 		{
 			app.StopCamera();
-			std::cerr << "Still capture image received" << std::endl;
+			LOG(1, "Still capture image received");
 
 			Stream *stream = app.StillStream();
 			StreamInfo info = app.GetStreamInfo(stream);
@@ -89,7 +96,7 @@ int main(int argc, char *argv[])
 		StillOptions *options = app.GetOptions();
 		if (options->Parse(argc, argv))
 		{
-			if (options->verbose)
+			if (options->verbose >= 2)
 				options->Print();
 			if (options->output.empty())
 				throw std::runtime_error("output file name required");
@@ -99,7 +106,7 @@ int main(int argc, char *argv[])
 	}
 	catch (std::exception const &e)
 	{
-		std::cerr << "ERROR: *** " << e.what() << " ***" << std::endl;
+		LOG_ERROR("ERROR: *** " << e.what() << " ***");
 		return -1;
 	}
 	return 0;

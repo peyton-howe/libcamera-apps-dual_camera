@@ -59,6 +59,13 @@ static void event_loop(LibcameraDetectApp &app)
 	for (unsigned int count = 0;; count++)
 	{
 		LibcameraApp::Msg msg = app.Wait();
+		if (msg.type == LibcameraApp::MsgType::Timeout)
+		{
+			LOG_ERROR("ERROR: Device timeout detected, attempting a restart!!!");
+			app.StopCamera();
+			app.StartCamera();
+			continue;
+		}
 		if (msg.type == LibcameraApp::MsgType::Quit)
 			return;
 
@@ -86,7 +93,7 @@ static void event_loop(LibcameraDetectApp &app)
 				app.Teardown();
 				app.ConfigureStill();
 				app.StartCamera();
-				std::cerr << options->object << " detected" << std::endl;
+				LOG(1, options->object << " detected");
 			}
 		}
 		// In still capture mode, save a jpeg and go back to preview.
@@ -104,7 +111,7 @@ static void event_loop(LibcameraDetectApp &app)
 			snprintf(filename, sizeof(filename), options->output.c_str(), options->framestart);
 			filename[sizeof(filename) - 1] = 0;
 			options->framestart++;
-			std::cerr << "Save image " << filename << std::endl;
+			LOG(1, "Save image " << filename);
 			jpeg_save(mem, info, completed_request->metadata, std::string(filename), app.CameraId(), options);
 
 			// Restart camera in preview mode.
@@ -123,7 +130,7 @@ int main(int argc, char *argv[])
 		DetectOptions *options = app.GetOptions();
 		if (options->Parse(argc, argv))
 		{
-			if (options->verbose)
+			if (options->verbose >= 2)
 				options->Print();
 			if (options->output.empty())
 				throw std::runtime_error("output file name required");
@@ -133,7 +140,7 @@ int main(int argc, char *argv[])
 	}
 	catch (std::exception const &e)
 	{
-		std::cerr << "ERROR: *** " << e.what() << " ***" << std::endl;
+		LOG_ERROR("ERROR: *** " << e.what() << " ***");
 		return -1;
 	}
 	return 0;

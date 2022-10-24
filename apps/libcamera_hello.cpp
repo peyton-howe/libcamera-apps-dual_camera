@@ -27,26 +27,38 @@ static void event_loop(LibcameraApp &app)
 	for (unsigned int count = 0; ; count++)
 	{
 		LibcameraApp::Msg msg = app.Wait();
+		if (msg.type == LibcameraApp::MsgType::Timeout)
+		{
+			LOG_ERROR("ERROR: Device timeout detected, attempting a restart!!!");
+			app.StopCamera();
+			app.StartCamera();
+			continue;
+		}
 		if (msg.type == LibcameraApp::MsgType::Quit)
 			return;
 		else if (msg.type != LibcameraApp::MsgType::RequestComplete)
 			throw std::runtime_error("unrecognised message!");
-
+			
 		LibcameraApp::Msg msg2 = app.Wait();
+		if (msg2.type == LibcameraApp::MsgType::Timeout)
+		{
+			LOG_ERROR("ERROR: Device timeout detected, attempting a restart!!!");
+			app.StopCamera();
+			app.StartCamera();
+			continue;
+		}
 		if (msg2.type == LibcameraApp::MsgType::Quit)
 			return;
 		else if (msg2.type != LibcameraApp::MsgType::RequestComplete)
 			throw std::runtime_error("unrecognised message!");
-			
-		if (options->verbose)
-			std::cerr << "Viewfinder frame " << count << std::endl;
+
+		LOG(2, "Viewfinder frame " << count);
 		auto now = std::chrono::high_resolution_clock::now();
 		if (options->timeout && now - start_time > std::chrono::milliseconds(options->timeout))
 			return;
 
 		CompletedRequestPtr &completed_request = std::get<CompletedRequestPtr>(msg.payload);
 		CompletedRequestPtr &completed_request2 = std::get<CompletedRequestPtr>(msg.payload);
-		
 		app.ShowPreview(completed_request, app.ViewfinderStream(), completed_request2, app.ViewfinderStream2());
 	}
 }
@@ -59,7 +71,7 @@ int main(int argc, char *argv[])
 		Options *options = app.GetOptions();
 		if (options->Parse(argc, argv))
 		{
-			if (options->verbose)
+			if (options->verbose >= 2)
 				options->Print();
 
 			event_loop(app);
@@ -67,7 +79,7 @@ int main(int argc, char *argv[])
 	}
 	catch (std::exception const &e)
 	{
-		std::cerr << "ERROR: *** " << e.what() << " ***" << std::endl;
+		LOG_ERROR("ERROR: *** " << e.what() << " ***");
 		return -1;
 	}
 	return 0;

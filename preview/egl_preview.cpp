@@ -14,7 +14,6 @@
 #include "core/options.hpp"
 
 #include "preview.hpp"
-
 #include "mesh.hpp"
 
 #include <libdrm/drm_fourcc.h>
@@ -29,7 +28,7 @@
 #include <epoxy/gl.h>
 
 Mesh *SSQuad;
-	
+
 class EglPreview : public Preview
 {
 public:
@@ -82,8 +81,6 @@ private:
 	unsigned int max_image_height_;
 };
 
-
-
 static GLint compile_shader(GLenum target, const char *source)
 {
 	GLuint s = glCreateShader(target);
@@ -117,16 +114,16 @@ static GLint link_program(GLint vs, GLint fs)
 	
 	glBindAttribLocation(prog, 0, "pos");
 	glBindAttribLocation(prog, 2, "tex");
-		
+
 	glLinkProgram(prog);
 
 	GLint ok;
 	glGetProgramiv(prog, GL_LINK_STATUS, &ok);
 	if (!ok)
 	{
-		 /*Some drivers return a size of 1 for an empty log.  This is the size
-		  of a log that contains only a terminating NUL character.*/
-		 
+		/* Some drivers return a size of 1 for an empty log.  This is the size
+		 * of a log that contains only a terminating NUL character.
+		 */
 		GLint size;
 		GLchar *info = NULL;
 		glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &size);
@@ -141,7 +138,7 @@ static GLint link_program(GLint vs, GLint fs)
 
 	return prog;
 }
-		
+
 static void gl_setup(int width, int height, int window_width, int window_height)
 {
 	//float w_factor = width / (float)window_width;
@@ -149,41 +146,29 @@ static void gl_setup(int width, int height, int window_width, int window_height)
 	//float max_dimension = std::max(w_factor, h_factor);
 	//w_factor /= max_dimension;
 	//h_factor /= max_dimension;
-	//std::cout << "w factor= " << w_factor << "\n";
-	//std::cout << "h factor= " << h_factor << "\n";
-	//char vs[512];
-	/*snprintf(vs, sizeof(vs),
-			 //"vec3 Distort(vec4 p){\n"
-			 //   "vec3 v = p.xyz;\n"
-			//	"float r = length(v);\n"
-			//	"if (r > 0.0){\n"
-			//	  "float theta = atan(p.y,p.x);\n"
-            //      "r = r - 0.15*pow(r, 3.0) + 0.01*pow(r, 5.0);\n"
-            //      "v.x = r * cos(theta);\n"
-            //      "v.y = r * sin(theta);\n"
-            //    "}\n"
-            //    "return v;\n"
-            // "}\n"
-            //"  texcoord.x = pos.x / %f + 0.5;\n"
-			//"  texcoord.y = 0.5 - pos.y / %f;\n"
-			 //2.0 * w_factor, 2.0 * h_factor);*/
-			 
+	//char vs[256];
 	//snprintf(vs, sizeof(vs),
+	//		 "attribute vec4 pos;\n"
+	//		 "varying vec2 texcoord;\n"
+	//		 "\n"
+	//		 "void main() {\n"
+	//		 "  gl_Position = pos;\n"
+	//		 "  texcoord.x = pos.x / %f + 0.5;\n"
+	//		 "  texcoord.y = 0.5 - pos.y / %f;\n"
+	//		 "}\n",
+	//		 2.0 * w_factor, 2.0 * h_factor);
+	//vs[sizeof(vs) - 1] = 0;
 	const char *vs = "#version 300 es\n"
 					 "in vec3 pos;\n"
-			         "in vec2 tex;\n"
-			         "out vec2 texcoord;\n"
-			         "\n"
-			         "void main() {\n"
-			         "  gl_Position = vec4(pos, 1.0);\n"
-			 //"  texcoord.x = pos.x / %f + 0.5;\n"
-			 //"  texcoord.y = 0.5 - pos.y / %f;\n"
-			         "  texcoord = tex;\n"
-			         "}\n";
-			 //2.0 * w_factor, 2.0 * h_factor);
-	//vs[sizeof(vs) - 1] = 0;
+					 "in vec2 tex;\n"
+					 "out vec2 texcoord;\n"
+					 "\n"
+					 "void main() {\n"
+					 "  gl_Position = vec4(pos, 1.0);\n"
+					 "  texcoord = tex;\n"
+					 "}\n";
 	GLint vs_s = compile_shader(GL_VERTEX_SHADER, vs);
-	const char *fs = "#version 300 es\n"
+	const char *fs = "#version 300 es\n" 
 					 "#extension GL_OES_EGL_image_external : enable\n"
 					 "precision mediump float;\n"
 					 "uniform samplerExternalOES s;\n"
@@ -197,7 +182,7 @@ static void gl_setup(int width, int height, int window_width, int window_height)
 
 	glUseProgram(prog);
 	
-    std::vector<float> vertices; 
+	std::vector<float> vertices; 
     std::vector<unsigned short> indices;
         
 	float N = 100;    //create an NxN grid of triangles (NxNx2 Triangles produced)
@@ -232,13 +217,11 @@ static void gl_setup(int width, int height, int window_width, int window_height)
             indices.push_back((short)(offset+ (N+1)));
             indices.push_back((short)(offset+ (N+1) + 1));
         }
-    }
-
+	}
 	//static const float verts[] = { -w_factor, -h_factor, w_factor, -h_factor, w_factor, h_factor, -w_factor, h_factor };
 	//glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, verts);
 	//glEnableVertexAttribArray(0);
 	SSQuad = new Mesh({ POS, TEX }, vertices, indices);
-
 }
 
 EglPreview::EglPreview(Options const *options) : Preview(options), last_fd_(-1), last_fd2_(-1), first_time_(true)
@@ -419,14 +402,14 @@ static void get_colour_space_info(std::optional<libcamera::ColorSpace> const &cs
 	encoding = EGL_ITU_REC601_EXT;
 	range = EGL_YUV_NARROW_RANGE_EXT;
 
-	if (cs == libcamera::ColorSpace::Jpeg)
+	if (cs == libcamera::ColorSpace::Sycc)
 		range = EGL_YUV_FULL_RANGE_EXT;
 	else if (cs == libcamera::ColorSpace::Smpte170m)
 		/* all good */;
 	else if (cs == libcamera::ColorSpace::Rec709)
 		encoding = EGL_ITU_REC709_EXT;
 	else
-		std::cerr << "EglPreview: unexpected colour space " << libcamera::ColorSpace::toString(cs) << std::endl;
+		LOG(1, "EglPreview: unexpected colour space " << libcamera::ColorSpace::toString(cs));
 }
 
 void EglPreview::makeBuffer(int fd, size_t size, StreamInfo const &info, Buffer &buffer)
@@ -472,6 +455,7 @@ void EglPreview::makeBuffer(int fd, size_t size, StreamInfo const &info, Buffer 
 	EGLImage image = eglCreateImageKHR(egl_display_, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, NULL, attribs);
 	if (!image)
 		throw std::runtime_error("failed to import fd " + std::to_string(fd));
+
 	glGenTextures(1, &buffer.texture);
 	glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer.texture);
 	glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -496,24 +480,26 @@ void EglPreview::Show(int fd, libcamera::Span<uint8_t> span, StreamInfo const &i
 	Buffer &buffer2 = buffers2_[fd2];
 	if (buffer2.fd == -1)
 		makeBuffer(fd2, span2.size(), info2, buffer2);
-		
+
 	glClearColor(0, 0, 0, 0);
 	glClear(GL_COLOR_BUFFER_BIT);
+
 	glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer.texture);
-	glViewport(0, 0, 960, 1080);
-    //glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glViewport(0,0,960,1080);
+	//glBindFramebuffer(GL_FRAMEBUFFER,0);
+	SSQuad->draw();
+
+	glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer2.texture);
+	glViewport(960,0,960,1080);
+	glBindFramebuffer(GL_FRAMEBUFFER,0);
 	SSQuad->draw();
 	
-	glBindTexture(GL_TEXTURE_EXTERNAL_OES, buffer2.texture);
-	glViewport(960, 0, 960, 1080);
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	SSQuad->draw();
-	//glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 	EGLBoolean success [[maybe_unused]] = eglSwapBuffers(egl_display_, egl_surface_);
+
 	if (last_fd_ >= 0)
 		done_callback_(last_fd_);
 	last_fd_ = fd;
-	
 	//if (last_fd2_ >= 0)
 	//	done_callback_(last_fd2_);
 	//last_fd2_ = fd2;
