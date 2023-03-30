@@ -13,8 +13,7 @@
 
 NullEncoder::NullEncoder(VideoOptions const *options) : Encoder(options), abort_(false)
 {
-	if (options->verbose)
-		std::cerr << "Opened NullEncoder" << std::endl;
+	LOG(2, "Opened NullEncoder");
 	output_thread_ = std::thread(&NullEncoder::outputThread, this);
 }
 
@@ -22,8 +21,7 @@ NullEncoder::~NullEncoder()
 {
 	abort_ = true;
 	output_thread_.join();
-	if (options_.verbose)
-		std::cerr << "NullEncoder closed" << std::endl;
+	LOG(2, "NullEncoder closed");
 }
 
 // Push the buffer onto the output queue to be "encoded" and returned.
@@ -59,7 +57,10 @@ void NullEncoder::outputThread()
 					return;
 			}
 		}
-		output_ready_callback_(item.mem, item.length, item.timestamp_us, true);
+		// Ensure the input done callback happens before the output ready callback.
+		// This is needed as the metadata queue gets pushed in the former, and popped
+		// in the latter.
 		input_done_callback_(nullptr);
+		output_ready_callback_(item.mem, item.length, item.timestamp_us, true);
 	}
 }

@@ -18,6 +18,7 @@ import os.path
 import subprocess
 import sys
 from timeit import default_timer as timer
+import numpy as np
 
 
 class TestFailure(Exception):
@@ -31,7 +32,7 @@ def check_exists(file, preamble):
         raise TestFailure(preamble + ": " + file + " not found")
 
 
-def clean_dir(dir, exts=('.jpg', '.png', '.bmp', '.dng', '.h264', '.mjpeg', '.raw', 'log.txt')):
+def clean_dir(dir, exts=('.jpg', '.png', '.bmp', '.dng', '.h264', '.mjpeg', '.raw', 'log.txt', 'timestamps.txt', 'metadata.json', 'metadata.txt')):
     for file in os.listdir(dir):
         if file.endswith(exts):
             os.remove(os.path.join(dir, file))
@@ -110,9 +111,61 @@ def test_hello(exe_dir, output_dir):
     print("libcamera-hello tests passed")
 
 
-def check_size(file, limit, presamble):
+def check_size(file, limit, preamble):
     if os.path.getsize(file) < limit:
         raise TestFailure(preamble + " failed, file " + file + " too small")
+
+
+def check_metadata(file, timestamp_file, preamble):
+    try:
+        with open(timestamp_file) as f:
+            times = np.loadtxt(f)
+    except Exception:
+        raise TestFailure(preamble + " - could not read timestamps from file")
+    try:
+        with open(file) as f:
+            data = json.load(f)
+    except Exception:
+        raise TestFailure(preamble + " - could not read data from file")
+    if len(data) != len(times):
+        raise TestFailure(preamble + " - metadata file has " + ("fewer" if len(data) < len(times) else "more") + " data points than timestamps file")
+    diffs = np.diff([x["SensorTimestamp"] for x in data]).astype(np.float64)
+    t_diffs = np.diff(times)
+    diffs /= 1000000
+    if not np.allclose(diffs[2:4], t_diffs[2:4], rtol=0.01):
+        print(diffs[2:4], t_diffs[2:4])
+        raise TestFailure(preamble + " - metadata times don't match timestamps")
+
+
+def check_single_metadata(file, preamble):
+    try:
+        with open(file) as f:
+            data = json.load(f)
+    except Exception:
+        raise TestFailure(preamble + " - could not read data from file")
+    if type(data) != dict:
+        raise TestFailure(preamble + " - metadata file is not a dict")
+    try:
+        if type(data["SensorTimestamp"]) != int:
+            raise TestFailure(preamble + " - sensor timestamp is not an int")
+    except KeyError:
+        raise TestFailure(preamble + " - sensor timestamp is not present")
+
+
+def check_metadata_txt(file, preamble):
+    try:
+        with open(file) as f:
+            line1 = f.readline()
+            line2 = f.readline()
+            line3 = f.readline()
+    except Exception:
+        raise TestFailure(preamble + " - could not read data from file")
+    try:
+        assert "=" in line1
+        assert "=" in line2
+        assert "=" in line3
+    except Exception:
+        raise TestFailure(preamble + " - metadata file does not contain expected data")
 
 
 def test_still(exe_dir, output_dir):
@@ -121,6 +174,8 @@ def test_still(exe_dir, output_dir):
     output_png = os.path.join(output_dir, 'test.png')
     output_bmp = os.path.join(output_dir, 'test.bmp')
     output_dng = os.path.join(output_dir, 'test.dng')
+    output_metadata = os.path.join(output_dir, 'metadata.json')
+    output_metadata_txt = os.path.join(output_dir, 'metadata.txt')
     logfile = os.path.join(output_dir, 'log.txt')
     print("Testing", executable)
     check_exists(executable, 'test_still')
@@ -170,6 +225,25 @@ def test_still(exe_dir, output_dir):
     if os.path.isfile(os.path.join(output_dir, 'test002.jpg')):
                raise("test_still: timelapse test, unexpected output file")
 
+    # "metadata test". Check that the json metadata file is written and looks sensible
+    print("    metadata test")
+    retcode, time_taken = run_executable([executable, '-t', '1000', '-o', output_jpg,
+                                          '--metadata', output_metadata], logfile)
+    check_retcode(retcode, "test_still: metadata test")
+    check_time(time_taken, 1.2, 8, "test_still: metadata test")
+    check_size(output_jpg, 1024, "test_still: metadata test")
+    check_single_metadata(output_metadata, "test_still: metadata test")
+
+    # "metadata txt test". Check that the txt metadata file is written and looks sensible
+    print("    metadata txt test")
+    retcode, time_taken = run_executable([executable, '-t', '1000', '-o', output_jpg,
+                                          '--metadata', output_metadata_txt,
+                                          '--metadata-format', 'txt'], logfile)
+    check_retcode(retcode, "test_still: metadata txt test")
+    check_time(time_taken, 1.2, 8, "test_still: metadata txt test")
+    check_size(output_jpg, 1024, "test_still: metadata txt test")
+    check_metadata_txt(output_metadata_txt, "test_still: metadata txt test")
+
     print("libcamera-still tests passed")
 
 
@@ -213,16 +287,17 @@ def test_jpeg(exe_dir, output_dir):
     check_jpeg(output_jpg, "test_jpeg: jpg test")
 
     # "isolation test". As above, but force IPA to run is "isolation" mode.
-    print("    isolation test")
-    os.environ['LIBCAMERA_IPA_FORCE_ISOLATION'] = 'true'
-    retcode, time_taken = run_executable([executable, '-t', '1000', '-o', output_jpg],
-                                         logfile)
-    os.environ.pop('LIBCAMERA_IPA_FORCE_ISOLATION')
-    check_retcode(retcode, "test_jpeg: isolation test")
-    check_time(time_taken, 1.2, 8, "test_jpeg: isolation test")
-    check_size(output_jpg, 1024, "test_jpeg: isolation test")
+    # Disabled for now due to https://bugs.libcamera.org/show_bug.cgi?id=137
+    #print("    isolation test")
+    #os.environ['LIBCAMERA_IPA_FORCE_ISOLATION'] = 'true'
+    #retcode, time_taken = run_executable([executable, '-t', '1000', '-o', output_jpg],
+    #                                     logfile)
+    #os.environ.pop('LIBCAMERA_IPA_FORCE_ISOLATION')
+    #check_retcode(retcode, "test_jpeg: isolation test")
+    #check_time(time_taken, 1.2, 8, "test_jpeg: isolation test")
+    #check_size(output_jpg, 1024, "test_jpeg: isolation test")
     # For this one, we're actually going to peak inside the jpeg.
-    check_jpeg(output_jpg, "test_jpeg: isolation test")
+    #check_jpeg(output_jpg, "test_jpeg: isolation test")
 
     # "shutter test". See if we appear to get the shutter/gain we asked for.
     print("    shutter test")
@@ -263,6 +338,8 @@ def test_vid(exe_dir, output_dir):
     output_circular = os.path.join(output_dir, 'circular.h264')
     output_pause = os.path.join(output_dir, 'pause.h264')
     output_timestamps = os.path.join(output_dir, 'timestamps.txt')
+    output_metadata = os.path.join(output_dir, 'metadata.json')
+    output_metadata_txt = os.path.join(output_dir, 'metadata.txt')
     logfile = os.path.join(output_dir, 'log.txt')
     print("Testing", executable)
     check_exists(executable, 'test_vid')
@@ -320,6 +397,26 @@ def test_vid(exe_dir, output_dir):
     check_time(time_taken, 2, 6, "test_vid: timestamp test")
     check_size(output_h264, 1024, "test_vid: timestamp test")
     check_timestamps(output_timestamps, "test_vid: timestamp test")
+
+    # "metadata test". Check that the json metadata file is written and looks sensible
+    print("    metadata test")
+    retcode, time_taken = run_executable([executable, '-t', '2000', '-o', output_h264,
+                                          '--save-pts', output_timestamps,
+                                          '--metadata', output_metadata], logfile)
+    check_retcode(retcode, "test_vid: metadata test")
+    check_time(time_taken, 2, 6, "test_vid: metadata test")
+    check_size(output_h264, 1024, "test_vid: metadata test")
+    check_metadata(output_metadata, output_timestamps, "test_vid: metadata test")
+
+    # "metadata txt test". Check that the txt metadata file is written and looks sensible
+    print("    metadata txt test")
+    retcode, time_taken = run_executable([executable, '-t', '2000', '-o', output_h264,
+                                          '--metadata', output_metadata_txt,
+                                          '--metadata-format', 'txt'], logfile)
+    check_retcode(retcode, "test_vid: metadata txt test")
+    check_time(time_taken, 2, 6, "test_vid: metadata txt test")
+    check_size(output_h264, 1024, "test_vid: metadata txt test")
+    check_metadata_txt(output_metadata_txt, "test_vid: metadata txt test")
 
     print("libcamera-vid tests passed")
 

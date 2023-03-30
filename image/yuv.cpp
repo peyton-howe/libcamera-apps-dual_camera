@@ -20,7 +20,7 @@ static void yuv420_save(std::vector<libcamera::Span<uint8_t>> const &mem, Stream
 			throw std::runtime_error("both width and height must be even");
 		if (mem.size() != 1)
 			throw std::runtime_error("incorrect number of planes in YUV420 data");
-		FILE *fp = fopen(filename.c_str(), "w");
+		FILE *fp = filename == "-" ? stdout : fopen(filename.c_str(), "w");
 		if (!fp)
 			throw std::runtime_error("failed to open file " + filename);
 		try
@@ -44,10 +44,13 @@ static void yuv420_save(std::vector<libcamera::Span<uint8_t>> const &mem, Stream
 				if (fwrite(V + j * stride, w, 1, fp) != 1)
 					throw std::runtime_error("failed to write file " + filename);
 			}
+			if (fp != stdout)
+				fclose(fp);
 		}
 		catch (std::exception const &e)
 		{
-			fclose(fp);
+			if (fp != stdout)
+				fclose(fp);
 			throw;
 		}
 	}
@@ -62,7 +65,8 @@ static void yuyv_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamIn
 	{
 		if ((info.width & 1) || (info.height & 1))
 			throw std::runtime_error("both width and height must be even");
-		FILE *fp = fopen(filename.c_str(), "w");
+
+		FILE *fp = filename == "-" ? stdout : fopen(filename.c_str(), "w");
 		if (!fp)
 			throw std::runtime_error("failed to open file " + filename);
 		try
@@ -94,11 +98,13 @@ static void yuyv_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamIn
 				if (fwrite(&row[0], info.width / 2, 1, fp) != 1)
 					throw std::runtime_error("failed to write file " + filename);
 			}
-			fclose(fp);
+			if (fp != stdout)
+				fclose(fp);
 		}
 		catch (std::exception const &e)
 		{
-			fclose(fp);
+			if (fp != stdout)
+				fclose(fp);
 			throw;
 		}
 	}
@@ -111,7 +117,7 @@ static void rgb_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInf
 {
 	if (options->encoding != "rgb")
 		throw std::runtime_error("encoding should be set to rgb");
-	FILE *fp = fopen(filename.c_str(), "w");
+	FILE *fp = filename == "-" ? stdout : fopen(filename.c_str(), "w");
 	if (!fp)
 		throw std::runtime_error("failed to open file " + filename);
 	try
@@ -122,11 +128,13 @@ static void rgb_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInf
 			if (fwrite(ptr, 3 * info.width, 1, fp) != 1)
 				throw std::runtime_error("failed to write file " + filename);
 		}
-		fclose(fp);
+		if (fp != stdout)
+			fclose(fp);
 	}
 	catch (std::exception const &e)
 	{
-		fclose(fp);
+		if (fp != stdout)
+			fclose(fp);
 		throw;
 	}
 }

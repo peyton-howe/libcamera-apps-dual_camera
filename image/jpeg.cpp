@@ -23,6 +23,10 @@
 #include "core/still_options.hpp"
 #include "core/stream_info.hpp"
 
+#ifndef MAKE_STRING
+#define MAKE_STRING "Raspberry Pi"
+#endif
+
 #if JPEG_LIB_VERSION_MAJOR > 9 || (JPEG_LIB_VERSION_MAJOR == 9 && JPEG_LIB_VERSION_MINOR >= 4)
 typedef size_t jpeg_mem_len_t;
 #else
@@ -189,7 +193,7 @@ void exif_read_tag(ExifData *exif, char const *str)
 	ExifTag tag = exif_tag_from_name(tag_name);
 	if (tag == 0)
 	{
-		std::cerr << "WARNING: no EXIF tag " << tag_name << " found - ignoring" << std::endl;
+		LOG_ERROR("WARNING: no EXIF tag " << tag_name << " found - ignoring");
 		return;
 	}
 
@@ -200,7 +204,7 @@ void exif_read_tag(ExifData *exif, char const *str)
 		throw std::runtime_error("failed to create entry for EXIF tag " + tag_string + ", please try without this tag");
 	if (entry->format == 0)
 	{
-		std::cerr << "WARNING: format for EXIF tag " << tag_name << " unknown - ignoring" << std::endl;
+		LOG_ERROR("WARNING: format for EXIF tag " << tag_name << " unknown - ignoring");
 		return;
 	}
 	if (entry->format == EXIF_FORMAT_UNDEFINED)
@@ -213,8 +217,7 @@ void exif_read_tag(ExifData *exif, char const *str)
 		}
 		else
 		{
-			std::cerr << "WARNING: libexif format for tag " << tag_name << " undefined - treating as ASCII"
-					  << std::endl;
+			LOG_ERROR("WARNING: libexif format for tag " << tag_name << " undefined - treating as ASCII");
 			entry->format = EXIF_FORMAT_ASCII;
 		}
 	}
@@ -420,24 +423,21 @@ static void YUV420_to_JPEG(const uint8_t *input, StreamInfo const &info,
 	jpeg_destroy_compress(&cinfo);
 }
 
-static void YUV_to_JPEG(const uint8_t *input, StreamInfo const &info,
-						const int output_width, const int output_height, const int quality,
-						const unsigned int restart, uint8_t *&jpeg_buffer, jpeg_mem_len_t &jpeg_len)
+static void YUV_to_JPEG(const uint8_t *input, StreamInfo const &info, const int output_width, const int output_height,
+						const int quality, const unsigned int restart, uint8_t *&jpeg_buffer, jpeg_mem_len_t &jpeg_len)
 {
 	if (info.pixel_format == libcamera::formats::YUYV)
-		YUYV_to_JPEG(input, info, output_width, output_height, quality, restart,
-					 jpeg_buffer, jpeg_len);
+		YUYV_to_JPEG(input, info, output_width, output_height, quality, restart, jpeg_buffer, jpeg_len);
 	else if (info.pixel_format == libcamera::formats::YUV420)
-		YUV420_to_JPEG(input, info, output_width, output_height, quality, restart,
-					   jpeg_buffer, jpeg_len);
+		YUV420_to_JPEG(input, info, output_width, output_height, quality, restart, jpeg_buffer, jpeg_len);
 	else
 		throw std::runtime_error("unsupported YUV format in JPEG encode");
 }
 
-static void create_exif_data(std::vector<libcamera::Span<uint8_t>> const &mem,
-							 StreamInfo const &info, ControlList const &metadata, std::string const &cam_name,
-							 StillOptions const *options, uint8_t *&exif_buffer, unsigned int &exif_len,
-							 uint8_t *&thumb_buffer, jpeg_mem_len_t &thumb_len)
+static void create_exif_data(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const &info,
+							 ControlList const &metadata, std::string const &cam_model, StillOptions const *options,
+							 uint8_t *&exif_buffer, unsigned int &exif_len, uint8_t *&thumb_buffer,
+							 jpeg_mem_len_t &thumb_len)
 {
 	exif_buffer = nullptr;
 	ExifData *exif = nullptr;
@@ -452,11 +452,11 @@ static void create_exif_data(std::vector<libcamera::Span<uint8_t>> const &mem,
 		// First add some fixed EXIF tags.
 
 		ExifEntry *entry = exif_create_tag(exif, EXIF_IFD_EXIF, EXIF_TAG_MAKE);
-		exif_set_string(entry, "Raspberry Pi");
+		exif_set_string(entry, MAKE_STRING);
 		entry = exif_create_tag(exif, EXIF_IFD_EXIF, EXIF_TAG_MODEL);
-		exif_set_string(entry, cam_name.c_str());
+		exif_set_string(entry, cam_model.c_str());
 		entry = exif_create_tag(exif, EXIF_IFD_EXIF, EXIF_TAG_SOFTWARE);
-		exif_set_string(entry, "libcamera-still");
+		exif_set_string(entry, "libcamera-apps");
 		entry = exif_create_tag(exif, EXIF_IFD_EXIF, EXIF_TAG_DATE_TIME);
 		std::time_t raw_time;
 		std::time(&raw_time);
@@ -465,34 +465,42 @@ static void create_exif_data(std::vector<libcamera::Span<uint8_t>> const &mem,
 		time_info = std::localtime(&raw_time);
 		std::strftime(time_string, sizeof(time_string), "%Y:%m:%d %H:%M:%S", time_info);
 		exif_set_string(entry, time_string);
+		entry = exif_create_tag(exif, EXIF_IFD_EXIF, EXIF_TAG_DATE_TIME_ORIGINAL);
+		exif_set_string(entry, time_string);
+		entry = exif_create_tag(exif, EXIF_IFD_EXIF, EXIF_TAG_DATE_TIME_DIGITIZED);
+		exif_set_string(entry, time_string);
 
 		// Now add some tags filled in from the image metadata.
-		if (metadata.contains(libcamera::controls::ExposureTime))
+		auto exposure_time = metadata.get(libcamera::controls::ExposureTime);
+		if (exposure_time)
 		{
 			entry = exif_create_tag(exif, EXIF_IFD_EXIF, EXIF_TAG_EXPOSURE_TIME);
-			int32_t exposure_time = metadata.get(libcamera::controls::ExposureTime);
-			if (options->verbose)
-				std::cerr << "Exposure time: " << exposure_time << std::endl;
-			ExifRational exposure = { (ExifLong)exposure_time, 1000000 };
+			LOG(2, "Exposure time: " << *exposure_time);
+			ExifRational exposure = { (ExifLong)*exposure_time, 1000000 };
 			exif_set_rational(entry->data, exif_byte_order, exposure);
 		}
-		if (metadata.contains(libcamera::controls::AnalogueGain))
+		auto ag = metadata.get(libcamera::controls::AnalogueGain);
+		if (ag)
 		{
 			entry = exif_create_tag(exif, EXIF_IFD_EXIF, EXIF_TAG_ISO_SPEED_RATINGS);
-			float ag = metadata.get(libcamera::controls::AnalogueGain), dg = 1.0, gain;
-			if (metadata.contains(libcamera::controls::DigitalGain))
-				dg = metadata.get(libcamera::controls::DigitalGain);
-			gain = ag * dg;
-			if (options->verbose)
-				std::cerr << "Ag " << ag << " Dg " << dg << " Total " << gain << std::endl;
+			auto dg = metadata.get(libcamera::controls::DigitalGain);
+			float gain;
+			gain = *ag * (dg ? *dg : 1.0);
+			LOG(2, "Ag " << *ag << " Dg " << *dg << " Total " << gain);
 			exif_set_short(entry->data, exif_byte_order, 100 * gain);
+		}
+		auto lp = metadata.get(libcamera::controls::LensPosition);
+		if (lp)
+		{
+			entry = exif_create_tag(exif, EXIF_IFD_EXIF, EXIF_TAG_SUBJECT_DISTANCE);
+			ExifRational dist = { 1000, (ExifLong)(1000.0 * *lp) };
+			exif_set_rational(entry->data, exif_byte_order, dist);
 		}
 
 		// Command-line supplied tags.
 		for (auto &exif_item : options->exif)
 		{
-			if (options->verbose)
-				std::cerr << "Processing EXIF item: " << exif_item << std::endl;
+			LOG(2, "Processing EXIF item: " << exif_item);
 			exif_read_tag(exif, exif_item.c_str());
 		}
 
@@ -501,9 +509,7 @@ static void create_exif_data(std::vector<libcamera::Span<uint8_t>> const &mem,
 			// Add some tags for the thumbnail. We put in dummy values for the thumbnail
 			// offset/length to occupy the right amount of space, and fill them in later.
 
-			if (options->verbose)
-				std::cerr << "Thumbnail dimensions are " << options->thumb_width << " x " << options->thumb_height
-						  << std::endl;
+			LOG(2, "Thumbnail dimensions are " << options->thumb_width << " x " << options->thumb_height);
 			entry = exif_create_tag(exif, EXIF_IFD_1, EXIF_TAG_IMAGE_WIDTH);
 			exif_set_short(entry->data, exif_byte_order, options->thumb_width);
 			entry = exif_create_tag(exif, EXIF_IFD_1, EXIF_TAG_IMAGE_LENGTH);
@@ -535,8 +541,7 @@ static void create_exif_data(std::vector<libcamera::Span<uint8_t>> const &mem,
 				free(thumb_buffer);
 				thumb_buffer = nullptr;
 			}
-			if (options->verbose)
-				std::cerr << "Thumbnail size " << thumb_len << std::endl;
+			LOG(2, "Thumbnail size " << thumb_len);
 			if (q <= 0)
 				throw std::runtime_error("failed to make acceptable thumbnail");
 
@@ -565,9 +570,8 @@ static void create_exif_data(std::vector<libcamera::Span<uint8_t>> const &mem,
 	}
 }
 
-void jpeg_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const &info,
-			   ControlList const &metadata, std::string const &filename,
-			   std::string const &cam_name, StillOptions const *options)
+void jpeg_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const &info, ControlList const &metadata,
+			   std::string const &filename, std::string const &cam_model, StillOptions const *options)
 {
 	FILE *fp = nullptr;
 	uint8_t *thumb_buffer = nullptr;
@@ -585,17 +589,15 @@ void jpeg_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo cons
 
 		jpeg_mem_len_t thumb_len = 0; // stays zero if no thumbnail
 		unsigned int exif_len;
-		create_exif_data(mem, info, metadata, cam_name, options, exif_buffer, exif_len,
-						 thumb_buffer, thumb_len);
+		create_exif_data(mem, info, metadata, cam_model, options, exif_buffer, exif_len, thumb_buffer, thumb_len);
 
 		// Make the full size JPEG (could probably be more efficient if we had
 		// YUV422 or YUV420 planar format).
 
 		jpeg_mem_len_t jpeg_len;
-		YUV_to_JPEG((uint8_t *)(mem[0].data()), info, info.width, info.height, options->quality,
-					options->restart, jpeg_buffer, jpeg_len);
-		if (options->verbose)
-			std::cerr << "JPEG size is " << jpeg_len << std::endl;
+		YUV_to_JPEG((uint8_t *)(mem[0].data()), info, info.width, info.height, options->quality, options->restart,
+					jpeg_buffer, jpeg_len);
+		LOG(2, "JPEG size is " << jpeg_len);
 
 		// Write everything out.
 
@@ -603,8 +605,7 @@ void jpeg_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo cons
 		if (!fp)
 			throw std::runtime_error("failed to open file " + options->output);
 
-		if (options->verbose)
-			std::cerr << "EXIF data len " << exif_len << std::endl;
+		LOG(2, "EXIF data len " << exif_len);
 
 		if (fwrite(exif_header, sizeof(exif_header), 1, fp) != 1 || fputc((exif_len + thumb_len + 2) >> 8, fp) == EOF ||
 			fputc((exif_len + thumb_len + 2) & 0xff, fp) == EOF || fwrite(exif_buffer, exif_len, 1, fp) != 1 ||

@@ -39,12 +39,32 @@ static void event_loop(LibcameraJpegApp &app)
 	app.StartCamera();
 	auto start_time = std::chrono::high_resolution_clock::now();
 
-	for (unsigned int count = 0; ; count++)
+	for (;;)
 	{
 		LibcameraApp::Msg msg = app.Wait();
+		if (msg.type == LibcameraApp::MsgType::Timeout)
+		{
+			LOG_ERROR("ERROR: Device timeout detected, attempting a restart!!!");
+			app.StopCamera();
+			app.StartCamera();
+			continue;
+		}
 		if (msg.type == LibcameraApp::MsgType::Quit)
 			return;
 		else if (msg.type != LibcameraApp::MsgType::RequestComplete)
+			throw std::runtime_error("unrecognised message!");
+
+		LibcameraApp::Msg msg2 = app.Wait();
+		if (msg.type == LibcameraApp::MsgType::Timeout)
+		{
+			LOG_ERROR("ERROR: Device timeout detected, attempting a restart!!!");
+			app.StopCamera();
+			app.StartCamera();
+			continue;
+		}
+		if (msg2.type == LibcameraApp::MsgType::Quit)
+			return;
+		else if (msg2.type != LibcameraApp::MsgType::RequestComplete)
 			throw std::runtime_error("unrecognised message!");
 
 		// In viewfinder mode, simply run until the timeout. When that happens, switch to
@@ -62,20 +82,21 @@ static void event_loop(LibcameraJpegApp &app)
 			else
 			{
 				CompletedRequestPtr &completed_request = std::get<CompletedRequestPtr>(msg.payload);
-				app.ShowPreview(completed_request, app.ViewfinderStream());
+				CompletedRequestPtr &completed_request2 = std::get<CompletedRequestPtr>(msg2.payload);
+				app.ShowPreview(completed_request, completed_request2, app.ViewfinderStream());
 			}
 		}
 		// In still capture mode, save a jpeg and quit.
 		else if (app.StillStream())
 		{
 			app.StopCamera();
-			std::cerr << "Still capture image received" << std::endl;
+			LOG(1, "Still capture image received");
 
 			Stream *stream = app.StillStream();
 			StreamInfo info = app.GetStreamInfo(stream);
 			CompletedRequestPtr &payload = std::get<CompletedRequestPtr>(msg.payload);
 			const std::vector<libcamera::Span<uint8_t>> mem = app.Mmap(payload->buffers[stream]);
-			jpeg_save(mem, info, payload->metadata, options->output, app.CameraId(), options);
+			jpeg_save(mem, info, payload->metadata, options->output, app.CameraModel(), options);
 			return;
 		}
 	}
@@ -89,7 +110,7 @@ int main(int argc, char *argv[])
 		StillOptions *options = app.GetOptions();
 		if (options->Parse(argc, argv))
 		{
-			if (options->verbose)
+			if (options->verbose >= 2)
 				options->Print();
 			if (options->output.empty())
 				throw std::runtime_error("output file name required");
@@ -99,7 +120,7 @@ int main(int argc, char *argv[])
 	}
 	catch (std::exception const &e)
 	{
-		std::cerr << "ERROR: *** " << e.what() << " ***" << std::endl;
+		LOG_ERROR("ERROR: *** " << e.what() << " ***");
 		return -1;
 	}
 	return 0;

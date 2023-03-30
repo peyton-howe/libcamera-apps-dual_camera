@@ -5,6 +5,7 @@
  * dng.cpp - Save raw image as DNG file.
  */
 
+#include <limits>
 #include <map>
 
 #include <libcamera/control_ids.h>
@@ -14,6 +15,10 @@
 
 #include "core/still_options.hpp"
 #include "core/stream_info.hpp"
+
+#ifndef MAKE_STRING
+#define MAKE_STRING "Raspberry Pi"
+#endif
 
 using namespace libcamera;
 
@@ -39,14 +44,18 @@ static const std::map<PixelFormat, BayerFormat> bayer_formats =
 	{ formats::SGRBG12_CSI2P, { "GRBG-12", 12, TIFF_GRBG } },
 	{ formats::SBGGR12_CSI2P, { "BGGR-12", 12, TIFF_BGGR } },
 	{ formats::SGBRG12_CSI2P, { "GBRG-12", 12, TIFF_GBRG } },
+	{ formats::SRGGB16,       { "RGGB-16", 16, TIFF_RGGB } },
+	{ formats::SGRBG16,       { "GRBG-16", 16, TIFF_GRBG } },
+	{ formats::SBGGR16,       { "BGGR-16", 16, TIFF_BGGR } },
+	{ formats::SGBRG16,       { "GBRG-16", 16, TIFF_GBRG } },
 };
 
-static void unpack_10bit(uint8_t *src, StreamInfo const &info, uint16_t *dest)
+static void unpack_10bit(uint8_t const *src, StreamInfo const &info, uint16_t *dest)
 {
 	unsigned int w_align = info.width & ~3;
 	for (unsigned int y = 0; y < info.height; y++, src += info.stride)
 	{
-		uint8_t *ptr = src;
+		uint8_t const *ptr = src;
 		unsigned int x;
 		for (x = 0; x < w_align; x += 4, ptr += 5)
 		{
@@ -60,12 +69,12 @@ static void unpack_10bit(uint8_t *src, StreamInfo const &info, uint16_t *dest)
 	}
 }
 
-static void unpack_12bit(uint8_t *src, StreamInfo const &info, uint16_t *dest)
+static void unpack_12bit(uint8_t const *src, StreamInfo const &info, uint16_t *dest)
 {
 	unsigned int w_align = info.width & ~1;
 	for (unsigned int y = 0; y < info.height; y++, src += info.stride)
 	{
-		uint8_t *ptr = src;
+		uint8_t const *ptr = src;
 		unsigned int x;
 		for (x = 0; x < w_align; x += 2, ptr += 3)
 		{
@@ -74,6 +83,18 @@ static void unpack_12bit(uint8_t *src, StreamInfo const &info, uint16_t *dest)
 		}
 		if (x < info.width)
 			*dest++ = (ptr[x & 1] << 4) | ((ptr[2] >> ((x & 1) << 2)) & 15);
+	}
+}
+
+static void unpack_16bit(uint8_t const *src, StreamInfo const &info, uint16_t *dest)
+{
+	/* Assume the pixels in memory are already in native byte order */
+	unsigned int w = info.width;
+	for (unsigned int y = 0; y < info.height; y++)
+	{
+		memcpy(dest, src, 2 * w);
+		dest += w;
+		src += info.stride;
 	}
 }
 
@@ -126,9 +147,8 @@ Matrix(float m0, float m1, float m2,
 	}
 };
 
-void dng_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const &info,
-			  ControlList const &metadata, std::string const &filename,
-			  std::string const &cam_name, StillOptions const *options)
+void dng_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const &info, ControlList const &metadata,
+			  std::string const &filename, std::string const &cam_model, StillOptions const *options)
 {
 	// Check the Bayer format and unpack it to u16.
 
@@ -136,68 +156,69 @@ void dng_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const
 	if (it == bayer_formats.end())
 		throw std::runtime_error("unsupported Bayer format");
 	BayerFormat const &bayer_format = it->second;
-	std::cerr << "Bayer format is " << bayer_format.name << "\n";
+	LOG(1, "Bayer format is " << bayer_format.name);
 
 	std::vector<uint16_t> buf(info.width * info.height);
 	if (bayer_format.bits == 10)
-		unpack_10bit((uint8_t *)mem[0].data(), info, &buf[0]);
+		unpack_10bit(mem[0].data(), info, &buf[0]);
 	else if (bayer_format.bits == 12)
-		unpack_12bit((uint8_t *)mem[0].data(), info, &buf[0]);
+		unpack_12bit(mem[0].data(), info, &buf[0]);
 	else
-		throw std::runtime_error("unsupported bit depth " + std::to_string(bayer_format.bits));
+		unpack_16bit(mem[0].data(), info, &buf[0]);
 
 	// We need to fish out some metadata values for the DNG.
-
 	float black = 4096 * (1 << bayer_format.bits) / 65536.0;
 	float black_levels[] = { black, black, black, black };
-	if (metadata.contains(controls::SensorBlackLevels))
+	auto bl = metadata.get(controls::SensorBlackLevels);
+	if (bl)
 	{
-		Span<const int32_t> levels = metadata.get(controls::SensorBlackLevels);
 		// levels is in the order R, Gr, Gb, B. Re-order it for the actual bayer order.
 		for (int i = 0; i < 4; i++)
 		{
 			int j = bayer_format.order[i];
 			j = j == 0 ? 0 : (j == 2 ? 3 : 1 + !!bayer_format.order[i ^ 1]);
-			black_levels[j] = levels[i] * (1 << bayer_format.bits) / 65536.0;
+			black_levels[j] = (*bl)[i] * (1 << bayer_format.bits) / 65536.0;
 		}
 	}
 	else
-		std::cerr << "WARNING: no black level found, using default" << std::endl;
+		LOG_ERROR("WARNING: no black level found, using default");
 
+	auto exp = metadata.get(controls::ExposureTime);
 	float exp_time = 10000;
-	if (metadata.contains(controls::ExposureTime))
-		exp_time = metadata.get(controls::ExposureTime);
+	if (exp)
+		exp_time = *exp;
 	else
-		std::cerr << "WARNING: default to exposure time of " << exp_time << "us" << std::endl;
+		LOG_ERROR("WARNING: default to exposure time of " << exp_time << "us");
 	exp_time /= 1e6;
 
+	auto ag = metadata.get(controls::AnalogueGain);
 	uint16_t iso = 100;
-	if (metadata.contains(controls::AnalogueGain))
-		iso = metadata.get(controls::AnalogueGain) * 100.0;
+	if (ag)
+		iso = *ag * 100.0;
 	else
-		std::cerr << "WARNING: default to ISO value of " << iso << std::endl;
+		LOG_ERROR("WARNING: default to ISO value of " << iso);
 
 	float NEUTRAL[] = { 1, 1, 1 };
 	Matrix WB_GAINS(1, 1, 1);
-	if (metadata.contains(controls::ColourGains))
+	auto cg = metadata.get(controls::ColourGains);
+	if (cg)
 	{
-		Span<const float> colour_gains = metadata.get(controls::ColourGains);
-		NEUTRAL[0] = 1.0 / colour_gains[0];
-		NEUTRAL[2] = 1.0 / colour_gains[1];
-		WB_GAINS = Matrix(colour_gains[0], 1, colour_gains[1]);
+		NEUTRAL[0] = 1.0 / (*cg)[0];
+		NEUTRAL[2] = 1.0 / (*cg)[1];
+		WB_GAINS = Matrix((*cg)[0], 1, (*cg)[1]);
 	}
 
 	// Use a slightly plausible default CCM in case the metadata doesn't have one (it should!).
 	Matrix CCM(1.90255, -0.77478, -0.12777,
 			   -0.31338, 1.88197, -0.56858,
 			   -0.06001, -0.61785, 1.67786);
-	if (metadata.contains(controls::ColourCorrectionMatrix))
+	auto ccm = metadata.get(controls::ColourCorrectionMatrix);
+	if (ccm)
 	{
-		Span<const float> const &coeffs = metadata.get(controls::ColourCorrectionMatrix);
-		CCM = Matrix(coeffs[0], coeffs[1], coeffs[2], coeffs[3], coeffs[4], coeffs[5], coeffs[6], coeffs[7], coeffs[8]);
+		CCM = Matrix((*ccm)[0], (*ccm)[1], (*ccm)[2], (*ccm)[3], (*ccm)[4], (*ccm)[5], (*ccm)[6], (*ccm)[7], (*ccm)[8]);
 	}
 	else
-		std::cerr << "WARNING: no CCM metadata found" << std::endl;
+		LOG_ERROR("WARNING: no CCM metadata found");
 
 	// This maxtrix from http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
 	Matrix RGB2XYZ(0.4124564, 0.3575761, 0.1804375,
@@ -205,16 +226,13 @@ void dng_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const
 				   0.0193339, 0.1191920, 0.9503041);
 	Matrix CAM_XYZ = (RGB2XYZ * CCM * WB_GAINS).Inv();
 
-	if (options->verbose)
-	{
-		std::cerr << "Black levels " << black_levels[0] << " " << black_levels[1] << " " << black_levels[2] << " "
-				  << black_levels[3] << ", exposure time " << exp_time * 1e6 << "us, ISO " << iso << std::endl;
-		std::cerr << "Neutral " << NEUTRAL[0] << " " << NEUTRAL[1] << " " << NEUTRAL[2] << std::endl;
-		std::cerr << "Cam_XYZ: " << std::endl;
-		std::cerr << CAM_XYZ.m[0] << " " << CAM_XYZ.m[1] << " " << CAM_XYZ.m[2] << std::endl;
-		std::cerr << CAM_XYZ.m[3] << " " << CAM_XYZ.m[4] << " " << CAM_XYZ.m[5] << std::endl;
-		std::cerr << CAM_XYZ.m[6] << " " << CAM_XYZ.m[7] << " " << CAM_XYZ.m[8] << std::endl;
-	}
+	LOG(2, "Black levels " << black_levels[0] << " " << black_levels[1] << " " << black_levels[2] << " "
+						   << black_levels[3] << ", exposure time " << exp_time * 1e6 << "us, ISO " << iso);
+	LOG(2, "Neutral " << NEUTRAL[0] << " " << NEUTRAL[1] << " " << NEUTRAL[2]);
+	LOG(2, "Cam_XYZ: ");
+	LOG(2, CAM_XYZ.m[0] << " " << CAM_XYZ.m[1] << " " << CAM_XYZ.m[2]);
+	LOG(2, CAM_XYZ.m[3] << " " << CAM_XYZ.m[4] << " " << CAM_XYZ.m[5]);
+	LOG(2, CAM_XYZ.m[6] << " " << CAM_XYZ.m[7] << " " << CAM_XYZ.m[8]);
 
 	// Finally write the DNG.
 
@@ -225,6 +243,7 @@ void dng_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const
 		const short cfa_repeat_pattern_dim[] = { 2, 2 };
 		uint32_t white = (1 << bayer_format.bits) - 1;
 		toff_t offset_subifd = 0, offset_exififd = 0;
+		std::string unique_model = std::string(MAKE_STRING " ") + cam_model;
 
 		tif = TIFFOpen(filename.c_str(), "w");
 		if (!tif)
@@ -238,11 +257,11 @@ void dng_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const
 		TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, 8);
 		TIFFSetField(tif, TIFFTAG_COMPRESSION, COMPRESSION_NONE);
 		TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
-		TIFFSetField(tif, TIFFTAG_MAKE, "Raspberry Pi");
-		TIFFSetField(tif, TIFFTAG_MODEL, cam_name.c_str());
+		TIFFSetField(tif, TIFFTAG_MAKE, MAKE_STRING);
+		TIFFSetField(tif, TIFFTAG_MODEL, cam_model.c_str());
 		TIFFSetField(tif, TIFFTAG_DNGVERSION, "\001\001\000\000");
 		TIFFSetField(tif, TIFFTAG_DNGBACKWARDVERSION, "\001\000\000\000");
-		TIFFSetField(tif, TIFFTAG_UNIQUECAMERAMODEL, cam_name.c_str());
+		TIFFSetField(tif, TIFFTAG_UNIQUECAMERAMODEL, unique_model.c_str());
 		TIFFSetField(tif, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
 		TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, 3);
 		TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
@@ -261,9 +280,10 @@ void dng_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const
 			for (unsigned int x = 0; x < (info.width >> 4); x++)
 			{
 				unsigned int off = (y * info.width + x) << 4;
-				int grey = buf[off] + buf[off + 1] + buf[off + info.width] + buf[off + info.width + 1];
-				grey = white * sqrt(grey / (double)white); // fake "gamma"
-				thumb_buf[3 * x] = thumb_buf[3 * x + 1] = thumb_buf[3 * x + 2] = grey >> (bayer_format.bits - 6);
+				uint32_t grey = buf[off] + buf[off + 1] + buf[off + info.width] + buf[off + info.width + 1];
+				grey = (grey << 14) >> bayer_format.bits;
+				grey = sqrt((double)grey); // simple "gamma correction"
+				thumb_buf[3 * x] = thumb_buf[3 * x + 1] = thumb_buf[3 * x + 2] = grey;
 			}
 			if (TIFFWriteScanline(tif, &thumb_buf[0], y, 0) != 1)
 				throw std::runtime_error("error writing DNG thumbnail data");
@@ -314,6 +334,13 @@ void dng_save(std::vector<libcamera::Span<uint8_t>> const &mem, StreamInfo const
 
 		TIFFSetField(tif, EXIFTAG_ISOSPEEDRATINGS, 1, &iso);
 		TIFFSetField(tif, EXIFTAG_EXPOSURETIME, exp_time);
+
+		auto lp = metadata.get(libcamera::controls::LensPosition);
+		if (lp)
+		{
+			double dist = (*lp > 0.0) ? (1.0 / *lp) : std::numeric_limits<double>::infinity();
+			TIFFSetField(tif, EXIFTAG_SUBJECTDISTANCE, dist);
+		}
 
 		TIFFCheckpointDirectory(tif);
 		offset_exififd = TIFFCurrentDirOffset(tif);

@@ -22,12 +22,14 @@ static int signal_received;
 static void default_signal_handler(int signal_number)
 {
 	signal_received = signal_number;
-	std::cerr << "Received signal " << signal_number << std::endl;
+	LOG(1, "Received signal " << signal_number);
 }
 
 static int get_key_or_signal(VideoOptions const *options, pollfd p[1])
 {
 	int key = 0;
+	if (signal_received == SIGINT)
+		return 'x';
 	if (options->keypress)
 	{
 		poll(p, 1, 0);
@@ -65,6 +67,7 @@ static void event_loop(LibcameraEncoder &app)
 	VideoOptions const *options = app.GetOptions();
 	std::unique_ptr<Output> output = std::unique_ptr<Output>(Output::Create(options));
 	app.SetEncodeOutputReadyCallback(std::bind(&Output::OutputReady, output.get(), _1, _2, _3, _4));
+	app.SetMetadataReadyCallback(std::bind(&Output::MetadataReady, output.get(), _1));
 
 	app.OpenCamera();
 	app.ConfigureVideo(get_colourspace_flags(options->codec));
@@ -75,21 +78,42 @@ static void event_loop(LibcameraEncoder &app)
 	// Monitoring for keypresses and signals.
 	signal(SIGUSR1, default_signal_handler);
 	signal(SIGUSR2, default_signal_handler);
+	signal(SIGINT, default_signal_handler);
 	pollfd p[1] = { { STDIN_FILENO, POLLIN, 0 } };
 
 	for (unsigned int count = 0; ; count++)
 	{
 		LibcameraEncoder::Msg msg = app.Wait();
+		if (msg.type == LibcameraApp::MsgType::Timeout)
+		{
+			LOG_ERROR("ERROR: Device timeout detected, attempting a restart!!!");
+			app.StopCamera();
+			app.StartCamera();
+			continue;
+		}
 		if (msg.type == LibcameraEncoder::MsgType::Quit)
 			return;
 		else if (msg.type != LibcameraEncoder::MsgType::RequestComplete)
 			throw std::runtime_error("unrecognised message!");
+
+		LibcameraApp::Msg msg2 = app.Wait();
+		if (msg2.type == LibcameraApp::MsgType::Timeout)
+		{
+			LOG_ERROR("ERROR: Device timeout detected, attempting a restart!!!");
+			app.StopCamera();
+			app.StartCamera();
+			continue;
+		}
+		if (msg2.type == LibcameraApp::MsgType::Quit)
+			return;
+		else if (msg2.type != LibcameraApp::MsgType::RequestComplete)
+			throw std::runtime_error("unrecognised message!");
+
 		int key = get_key_or_signal(options, p);
 		if (key == '\n')
 			output->Signal();
 
-		if (options->verbose)
-			std::cerr << "Viewfinder frame " << count << std::endl;
+		LOG(2, "Viewfinder frame " << count);
 		auto now = std::chrono::high_resolution_clock::now();
 		bool timeout = !options->frames && options->timeout &&
 					   (now - start_time > std::chrono::milliseconds(options->timeout));
@@ -97,15 +121,17 @@ static void event_loop(LibcameraEncoder &app)
 		if (timeout || frameout || key == 'x' || key == 'X')
 		{
 			if (timeout)
-				std::cerr << "Halting: reached timeout of " << options->timeout << " milliseconds.\n";
+				LOG(1, "Halting: reached timeout of " << options->timeout << " milliseconds.");
 			app.StopCamera(); // stop complains if encoder very slow to close
 			app.StopEncoder();
 			return;
 		}
 
 		CompletedRequestPtr &completed_request = std::get<CompletedRequestPtr>(msg.payload);
+		CompletedRequestPtr &completed_request2 = std::get<CompletedRequestPtr>(msg2.payload);
+		
 		app.EncodeBuffer(completed_request, app.VideoStream());
-		app.ShowPreview(completed_request, app.VideoStream());
+		app.ShowPreview(completed_request, completed_request2, app.VideoStream());
 	}
 }
 
@@ -117,7 +143,7 @@ int main(int argc, char *argv[])
 		VideoOptions *options = app.GetOptions();
 		if (options->Parse(argc, argv))
 		{
-			if (options->verbose)
+			if (options->verbose >= 2)
 				options->Print();
 
 			event_loop(app);
@@ -125,7 +151,7 @@ int main(int argc, char *argv[])
 	}
 	catch (std::exception const &e)
 	{
-		std::cerr << "ERROR: *** " << e.what() << " ***" << std::endl;
+		LOG_ERROR("ERROR: *** " << e.what() << " ***");
 		return -1;
 	}
 	return 0;

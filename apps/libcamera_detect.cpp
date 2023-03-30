@@ -24,17 +24,20 @@ struct DetectOptions : public StillOptions
 		options_.add_options()
 			("object", value<std::string>(&object), "Name of object to detect")
 			("gap", value<unsigned int>(&gap)->default_value(30), "Smallest gap between captures in frames")
+			("timeformat", value<std::string>(&timeformat)->default_value("%m%d%H%M%S"), "Date/Time format string - see C++ strftime()")
 			;
 	}
 
 	std::string object;
 	unsigned int gap;
+	std::string timeformat;
 
 	virtual void Print() const override
 	{
 		StillOptions::Print();
 		std::cerr << "    object: " << object << std::endl;
 		std::cerr << "    gap: " << gap << std::endl;
+		std::cerr << "    timeformat: " << timeformat << std::endl;
 	}
 };
 
@@ -59,6 +62,13 @@ static void event_loop(LibcameraDetectApp &app)
 	for (unsigned int count = 0;; count++)
 	{
 		LibcameraApp::Msg msg = app.Wait();
+		if (msg.type == LibcameraApp::MsgType::Timeout)
+		{
+			LOG_ERROR("ERROR: Device timeout detected, attempting a restart!!!");
+			app.StopCamera();
+			app.StartCamera();
+			continue;
+		}
 		if (msg.type == LibcameraApp::MsgType::Quit)
 			return;
 
@@ -86,7 +96,7 @@ static void event_loop(LibcameraDetectApp &app)
 				app.Teardown();
 				app.ConfigureStill();
 				app.StartCamera();
-				std::cerr << options->object << " detected" << std::endl;
+				LOG(1, options->object << " detected");
 			}
 		}
 		// In still capture mode, save a jpeg and go back to preview.
@@ -99,13 +109,25 @@ static void event_loop(LibcameraDetectApp &app)
 			libcamera::Stream *stream = app.StillStream(&info);
 			const std::vector<libcamera::Span<uint8_t>> mem = app.Mmap(completed_request->buffers[stream]);
 
-			// Make a filename for the output and save it.
+			// Generate a filename for the output and save it.
 			char filename[128];
-			snprintf(filename, sizeof(filename), options->output.c_str(), options->framestart);
+			if (options->datetime)
+			{
+				std::time_t raw_time;
+				std::time(&raw_time);
+				char time_string[32];
+				std::tm *time_info = std::localtime(&raw_time);
+				std::strftime(time_string, sizeof(time_string), options->timeformat.c_str() , time_info);
+				snprintf(filename, sizeof(filename), "%s%s.%s", options->output.c_str(), time_string, options->encoding.c_str());
+			}
+			else if (options->timestamp)
+				snprintf(filename, sizeof(filename), "%s%u.%s", options->output.c_str(), (unsigned)time(NULL), options->encoding.c_str());
+			else
+				snprintf(filename, sizeof(filename), options->output.c_str(), options->framestart);
 			filename[sizeof(filename) - 1] = 0;
 			options->framestart++;
-			std::cerr << "Save image " << filename << std::endl;
-			jpeg_save(mem, info, completed_request->metadata, std::string(filename), app.CameraId(), options);
+			LOG(1, "Save image " << filename);
+			jpeg_save(mem, info, completed_request->metadata, std::string(filename), app.CameraModel(), options);
 
 			// Restart camera in preview mode.
 			app.Teardown();
@@ -123,7 +145,7 @@ int main(int argc, char *argv[])
 		DetectOptions *options = app.GetOptions();
 		if (options->Parse(argc, argv))
 		{
-			if (options->verbose)
+			if (options->verbose >= 2)
 				options->Print();
 			if (options->output.empty())
 				throw std::runtime_error("output file name required");
@@ -133,7 +155,7 @@ int main(int argc, char *argv[])
 	}
 	catch (std::exception const &e)
 	{
-		std::cerr << "ERROR: *** " << e.what() << " ***" << std::endl;
+		LOG_ERROR("ERROR: *** " << e.what() << " ***");
 		return -1;
 	}
 	return 0;

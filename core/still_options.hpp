@@ -46,6 +46,8 @@ struct StillOptions : public Options
 			 "Create a symbolic link with this name to most recent saved file")
 			("immediate", value<bool>(&immediate)->default_value(false)->implicit_value(true),
 			 "Perform first capture immediately, with no preview phase")
+			("autofocus-on-capture", value<bool>(&af_on_capture)->default_value(false)->implicit_value(true),
+			 "Switch to AfModeAuto and trigger a scan just before capturing a still")
 			;
 		// clang-format on
 	}
@@ -108,6 +110,7 @@ struct StillOptions : public Options
 		std::cerr << "    thumbnail quality: " << thumb_quality << std::endl;
 		std::cerr << "    latest: " << latest << std::endl;
 		std::cerr << "    immediate " << immediate << std::endl;
+		std::cerr << "    AF on capture: " << af_on_capture << std::endl;
 		for (auto &s : exif)
 			std::cerr << "    EXIF: " << s << std::endl;
 	}

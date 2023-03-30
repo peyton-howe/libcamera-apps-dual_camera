@@ -30,6 +30,7 @@ static void event_loop(LibcameraRaw &app)
 	VideoOptions const *options = app.GetOptions();
 	std::unique_ptr<Output> output = std::unique_ptr<Output>(Output::Create(options));
 	app.SetEncodeOutputReadyCallback(std::bind(&Output::OutputReady, output.get(), _1, _2, _3, _4));
+	app.SetMetadataReadyCallback(std::bind(&Output::MetadataReady, output.get(), _1));
 
 	app.OpenCamera();
 	app.ConfigureVideo(LibcameraRaw::FLAG_VIDEO_RAW);
@@ -41,17 +42,23 @@ static void event_loop(LibcameraRaw &app)
 	{
 		LibcameraRaw::Msg msg = app.Wait();
 
+		if (msg.type == LibcameraApp::MsgType::Timeout)
+		{
+			LOG_ERROR("ERROR: Device timeout detected, attempting a restart!!!");
+			app.StopCamera();
+			app.StartCamera();
+			continue;
+		}
 		if (msg.type != LibcameraRaw::MsgType::RequestComplete)
 			throw std::runtime_error("unrecognised message!");
 		if (count == 0)
 		{
 			libcamera::StreamConfiguration const &cfg = app.RawStream()->configuration();
-			std::cerr << "Raw stream: " << cfg.size.width << "x" << cfg.size.height << " stride " << cfg.stride
-					  << " format " << cfg.pixelFormat.toString() << std::endl;
+			LOG(1, "Raw stream: " << cfg.size.width << "x" << cfg.size.height << " stride " << cfg.stride << " format "
+								  << cfg.pixelFormat.toString());
 		}
 
-		if (options->verbose)
-			std::cerr << "Viewfinder frame " << count << std::endl;
+		LOG(2, "Viewfinder frame " << count);
 		auto now = std::chrono::high_resolution_clock::now();
 		if (options->timeout && now - start_time > std::chrono::milliseconds(options->timeout))
 		{
@@ -74,7 +81,7 @@ int main(int argc, char *argv[])
 		{
 			options->denoise = "cdn_off";
 			options->nopreview = true;
-			if (options->verbose)
+			if (options->verbose >= 2)
 				options->Print();
 
 			event_loop(app);
@@ -82,7 +89,7 @@ int main(int argc, char *argv[])
 	}
 	catch (std::exception const &e)
 	{
-		std::cerr << "ERROR: *** " << e.what() << " ***" << std::endl;
+		LOG_ERROR("ERROR: *** " << e.what() << " ***");
 		return -1;
 	}
 	return 0;

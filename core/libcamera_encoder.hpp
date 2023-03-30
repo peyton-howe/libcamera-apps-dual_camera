@@ -5,6 +5,8 @@
  * libcamera_encoder.cpp - libcamera video encoding class.
  */
 
+#pragma once
+
 #include "core/libcamera_app.hpp"
 #include "core/stream_info.hpp"
 #include "core/video_options.hpp"
@@ -12,6 +14,7 @@
 #include "encoder/encoder.hpp"
 
 typedef std::function<void(void *, size_t, int64_t, bool)> EncodeOutputReadyCallback;
+typedef std::function<void(libcamera::ControlList &)> MetadataReadyCallback;
 
 class LibcameraEncoder : public LibcameraApp
 {
@@ -29,6 +32,7 @@ public:
 	}
 	// This is callback when the encoder gives you the encoded output data.
 	void SetEncodeOutputReadyCallback(EncodeOutputReadyCallback callback) { encode_output_ready_callback_ = callback; }
+	void SetMetadataReadyCallback(MetadataReadyCallback callback) { metadata_ready_callback_ = callback; }
 	void EncodeBuffer(CompletedRequestPtr &completed_request, Stream *stream)
 	{
 		assert(encoder_);
@@ -38,9 +42,8 @@ public:
 		void *mem = span.data();
 		if (!buffer || !mem)
 			throw std::runtime_error("no buffer to encode");
-		int64_t timestamp_ns = completed_request->metadata.contains(controls::SensorTimestamp)
-								? completed_request->metadata.get(controls::SensorTimestamp)
-								: buffer->metadata().timestamp;
+		auto ts = completed_request->metadata.get(controls::SensorTimestamp);
+		int64_t timestamp_ns = ts ? *ts : buffer->metadata().timestamp;
 		{
 			std::lock_guard<std::mutex> lock(encode_buffer_queue_mutex_);
 			encode_buffer_queue_.push(completed_request); // creates a new reference
@@ -73,6 +76,9 @@ private:
 			std::lock_guard<std::mutex> lock(encode_buffer_queue_mutex_);
 			if (encode_buffer_queue_.empty())
 				throw std::runtime_error("no buffer available to return");
+			CompletedRequestPtr &completed_request = encode_buffer_queue_.front();
+			if (metadata_ready_callback_ && !GetOptions()->metadata.empty())
+				metadata_ready_callback_(completed_request->metadata);
 			encode_buffer_queue_.pop(); // drop shared_ptr reference
 		}
 	}
@@ -80,4 +86,5 @@ private:
 	std::queue<CompletedRequestPtr> encode_buffer_queue_;
 	std::mutex encode_buffer_queue_mutex_;
 	EncodeOutputReadyCallback encode_output_ready_callback_;
+	MetadataReadyCallback metadata_ready_callback_;
 };
